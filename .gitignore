@@ -1,0 +1,11 @@
+/artifacts/
+/.pytest_cache/
+/.cursor/
+/build/
+/dist/
+/*.egg-info/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rubric-gen"
+version = "0.1.0"
+description = "RRD-style rubric generation and evaluation pipeline for clinical note generation."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic",
+    "numpy",
+    "openai",
+    "python-dotenv",
+    "sympy>=1.12",
+    "tqdm",
+]
+
+[project.scripts]
+rubric-gen = "rubric_gen.cli:main"
+rubric-compiled-demo = "rubric_gen.compiled.demo:main"
+rubric-compiled-pilot = "rubric_gen.compiled.pilot_runner:main"
+rubric-compiled-discovery = "rubric_gen.compiled.discovery_runner:main"
+rubric-compiled-iterative = "rubric_gen.compiled.iterative_runner:main"
+rubric-compiled-judgebench = "rubric_gen.compiled.judgebench_eval_runner:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rubric_gen*"]

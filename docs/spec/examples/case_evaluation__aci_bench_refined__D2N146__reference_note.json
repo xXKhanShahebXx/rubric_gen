@@ -1,0 +1,203 @@
+{
+  "evaluation_id": "aci_bench_refined__D2N146_reference_note_eval_v0_2",
+  "rubric_id": "aci_bench_refined__D2N146_rubric_v0_2",
+  "example_id": "aci_bench_refined__D2N146",
+  "candidate_id": "reference_note",
+  "note_family_id": "soap_note",
+  "rubric_version": "v0_2",
+  "hard_gate_results": [
+    {
+      "criterion_id": "aci_bench_refined__D2N146_no_unsupported_diagnosis",
+      "verdict": "MET",
+      "rationale": "[hard_gate_unsupported_bundle] No high-risk unsupported terms detected relative to dialogue (starter heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "er for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several way from some high fat food but i'm just still having a lot of",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_no_unsupported_certainty",
+      "verdict": "MET",
+      "rationale": "[hard_gate_certainty_vs_dialogue] No obvious certainty-inflation phrases detected beyond dialogue support (starter heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "l limits at four . one millimeters now let's talk a little bit about my assessment and plan for you okay i do believe you have some mild cholecystitis with gallstones i do n't appreciate any frank obstruction but it look",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    }
+  ],
+  "soft_results": [
+    {
+      "criterion_id": "aci_bench_refined__D2N146_required_sections",
+      "verdict": "MET",
+      "rationale": "[section_header_coverage] All 4 expected section header patterns found (heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "note_family_spec",
+          "quote": "[\"subjective\", \"objective\", \"assessment\", \"plan\"]",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_chief_complaint_alignment",
+      "verdict": "MET",
+      "rationale": "[dialogue_anchor_terms_in_note] Note reflects at least 1 anchored presenting-term(s) from the dialogue.",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "good morning bobby how are you\n[patient] i'm doing okay i as you're aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones a",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_symptom_detail_attributes",
+      "verdict": "MET",
+      "rationale": "[symptom_detail_bundle] Symptom attributes implied by dialogue appear represented in the note (keyword heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "around mealtimes how how does that pain kinda wax and wane for you\n[patient] most of the time it comes right after i eat\n[doctor] okay\n[patient] but it also can come on a couple of hours after i eat also so it's either",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        },
+        {
+          "source": "dialogue",
+          "quote": "pain that you feel\n[patient] well it's it's on the right hand side of my belly it's it's right underneath my ribs and it feels like a a squeezing severe pain it comes and goes but when it comes it's really severe and i",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_pertinent_negative_vomiting",
+      "verdict": "MET",
+      "rationale": "[relevant_negative_mirror] Pertinent negative appears reflected in the note (starter heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "ad some what i i would describe as low grade fevers and yes you're right i have feel nauseated but i have n't thrown up\n[doctor] okay so if it's okay with you i'm gon na go ahead and do a quick physical exam your vital s",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_associated_symptom_fever",
+      "verdict": "MET",
+      "rationale": "[anchor_terms_presence] Associated symptom language appears in the note.",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "ome to see\n[patient] okay cool\n[doctor] so i'm just curious talking about your symptoms here have you had any fevers you mentioned something about nausea but have you actually vomited from those symptoms\n[patient] there'",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_discussed_studies_results",
+      "verdict": "MET",
+      "rationale": "[discussed_study_mentioned_in_note] Discussed study/lab terms from the dialogue appear in the note (starter heuristic).",
+      "score_value": 1.0,
+      "confidence": null,
+      "error_codes": [],
+      "evidence_used": [
+        {
+          "source": "dialogue",
+          "quote": "aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several way from some high fat food but i",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ]
+    }
+  ],
+  "dimension_scores": [
+    {
+      "dimension_id": "clinical_completeness",
+      "earned_score": 5.0,
+      "max_score": 5.0,
+      "normalized_score": 1.0,
+      "criterion_count": 5
+    },
+    {
+      "dimension_id": "dialogue_faithfulness",
+      "earned_score": 2.0,
+      "max_score": 2.0,
+      "normalized_score": 1.0,
+      "criterion_count": 2
+    },
+    {
+      "dimension_id": "documentation_structure",
+      "earned_score": 1.0,
+      "max_score": 1.0,
+      "normalized_score": 1.0,
+      "criterion_count": 1
+    }
+  ],
+  "overall_decision": "sft_include",
+  "judge_metadata": {
+    "mode": "heuristic_per_criterion",
+    "prompt_version": "none",
+    "scaffold": "compiled_rubric_gen.v0_2",
+    "eval_kinds": [
+      "hard_gate_unsupported_bundle",
+      "hard_gate_certainty_vs_dialogue",
+      "section_header_coverage",
+      "dialogue_anchor_terms_in_note",
+      "symptom_detail_bundle",
+      "relevant_negative_mirror",
+      "anchor_terms_presence",
+      "discussed_study_mentioned_in_note"
+    ]
+  }
+}

@@ -1,0 +1,98 @@
+Description                                                                         Summary Amt.
+Beginning balance as of 02/25/2026                                                      1,073.99
+Total credits                                                                           6,718.05
+Total debits                                                                           -6,132.34
+Ending balance as of 03/26/2026                                                         1,659.70
+
+
+Date        Description                                                                   Amount  Running Bal.
+02/25/2026  Beginning balance as of 02/25/2026                                                        1,073.99
+02/25/2026  Google One 02/23 PURCHASE XXX-XX30000 CA                                      -20.54      1,053.45
+02/25/2026  SQ *PUNJABI DHABA 02/24 MOBILE PURCHASE Berkeley CA                           -14.88      1,038.57
+02/25/2026  UBER * PENDI 02/25 PURCHASE San Francisco CA                                   -9.95      1,028.62
+02/25/2026  TRADER JOE S # 02/25 MOBILE PURCHASE BERKELEY CA                              -51.61        977.01
+02/26/2026  DD *DOORDASH ZAYTOONME 02/24 PURCHASE 855-973-1040 CA                         -39.92        937.09
+02/26/2026  GYPSY'S TRATTORIA ITAL 02/24 MOBILE PURCHASE BERKELEY CA                      -20.93        916.16
+02/26/2026  AMAZON MKTPL*BE0T953F2 02/25 PURCHASE Amzn.com/bill WA                        -39.69        876.47
+02/27/2026  DD *DOORDASH LASCABAAS 02/25 PURCHASE 855-973-1040 CA                         -29.49        846.98
+02/27/2026  CAPITAL ONE DES:CRCARDPMT ID:CA003DC817436A1 INDN:Faiaz F Khan CO ID:XXXXX19318 WEB      -98.00        748.98
+03/02/2026  BKOFAMERICA ATM 03/02 #XXXXX7522 DEPOSIT BERKELEY MAIN BERKELEY CA            990.00      1,738.98
+03/02/2026  AMAZON MKTPL*B92NV18H1 02/26 PURCHASE Amzn.com/bill WA                        -19.83      1,719.15
+03/02/2026  AMAZON RETA* B949R2Q81 02/27 PURCHASE WWW.AMAZON.CO WA                        -20.93      1,698.22
+03/02/2026  APPLE.COM/BILL 02/27 PURCHASE 866-712-7753 CA                                 -10.99      1,687.23
+03/02/2026  SQ *HAYBA SHAWARMA 02/28 MOBILE PURCHASE Emeryville CA                        -15.44      1,671.79
+03/02/2026  DD *DOORDASH LASCABAAS 02/28 PURCHASE 855-973-1040 CA                         -22.60      1,649.19
+03/02/2026  TRADER JOE S # 02/28 MOBILE PURCHASE BERKELEY CA                              -41.72      1,607.47
+03/03/2026  BKOFAMERICA ATM 03/03 #XXXXX7664 DEPOSIT BERKELEY MAIN BERKELEY CA            990.00      2,597.47
+03/03/2026  RESTAURANT GUSTO 03/01 MOBILE PURCHASE XXX-XX305592 CA                        -29.99      2,567.48
+03/03/2026  DD *DOORDASHDASHPASS 03/03 PURCHASE DOORDASH.COM CA                            -4.99      2,562.49
+03/03/2026  TRADER JOE S # 03/03 MOBILE PURCHASE BERKELEY CA                              -32.73      2,529.76
+03/04/2026  DD *DOORDASH LASCABAAS 03/02 PURCHASE 855-973-1040 CA                         -29.49      2,500.27
+03/05/2026  DD *DOORDASH ZAYTOONME 03/03 PURCHASE 855-973-1040 CA                         -34.38      2,465.89
+03/05/2026  APF*Segula Investments, 03/03 PURCHASE XXX-XX02376 CA                        -679.47      1,786.42
+03/05/2026  AMAZON MKTPL*BP9704AP2 03/04 PURCHASE Amzn.com/bill WA                        -36.23      1,750.19
+03/05/2026  SQ *LEXIE'S FROZEN CUST 03/04 MOBILE PURCHASE Berkeley CA                      -5.50      1,744.69
+03/06/2026  Cascade Security DES:PAY 359484 ID:6semk7rtmpf INDN:Faiaz Khan CO ID:XXXXX64001 PPD    2,128.40      3,873.09
+03/06/2026  DD *DOORDASH KABANA 03/04 PURCHASE 855-973-1040 CA                            -33.66      3,839.43
+03/06/2026  AMAZON MKTPL*BE5S57Q51 03/05 PURCHASE Amzn.com/bill WA                        -91.34      3,748.09
+03/06/2026  AMAZON RETA* BP3RG7MD2 03/05 PURCHASE WWW.AMAZON.CO WA                        -32.39      3,715.70
+03/09/2026  DD *DOORDASH ZAYTOONME 03/06 PURCHASE DOORDASH.COM CA                         -39.65      3,676.05
+03/09/2026  AMAZON RETA* BP94Y6DU2 03/06 PURCHASE WWW.AMAZON.CO WA                        -56.21      3,619.84
+03/09/2026  Zelle payment to Rakowski Sands Conf# leks3ca8x                              -600.00      3,019.84
+03/09/2026  DD *DOORDASH LASCABAAS 03/07 PURCHASE DOORDASH.COM CA                         -29.49      2,990.35
+03/09/2026  OPENART AI 03/08 PURCHASE OPENART.AI CA                                       -84.00      2,906.35
+03/09/2026  TST*BARBEQUE AND SIZZLE 03/08 PURCHASE 510-810-2814 CA                        -45.20      2,861.15
+03/10/2026  DD *DOORDASH KYOTORAME 03/08 PURCHASE DOORDASH.COM CA                         -37.36      2,823.79
+03/10/2026  UBER * PENDI 03/09 PURCHASE San Francisco CA                                  -16.96      2,806.83
+03/10/2026  HALAL KAMDESH AFGHAN CU 03/09 MOBILE PURCHASE OAKLAND CA                     -156.85      2,649.98
+03/11/2026  Zelle payment to NIHAN ALI for "Brownies"; Conf# puqhyrh8e                    -65.00      2,584.98
+03/12/2026  DD *DOORDASH PIZZATWIS 03/10 PURCHASE 855-973-1040 CA                         -33.51      2,551.47
+03/12/2026  SQ *LEXIE'S FROZEN CUST 03/11 MOBILE PURCHASE Berkeley CA                     -35.00      2,516.47
+03/12/2026  MYTENNIGHT* NIGHT22 03/12 PURCHASE LONDON                                     -26.06      2,490.41
+03/13/2026  STOP AND SAVE MARKET 03/11 MOBILE PURCHASE BERKELEY CA                         -7.95      2,482.46
+03/13/2026  RESTAURANT GUSTO 03/11 MOBILE PURCHASE XXX-XX305592 CA                        -23.14      2,459.32
+03/13/2026  MYTENNIGHT* NIGHT23 03/13 PURCHASE LONDON                                     -55.67      2,403.65
+03/13/2026  CAPITAL ONE DES:CRCARDPMT ID:CA0C0450F088259 INDN:Faiaz F Khan CO ID:XXXXX19318 WEB      -25.00      2,378.65
+03/16/2026  UBER *TRIP H 03/13 PURCHASE San Francisco CA                                  -21.45      2,357.20
+03/16/2026  HALAL KAMDESH AFGHAN CU 03/13 MOBILE PURCHASE OAKLAND CA                     -103.58      2,253.62
+03/16/2026  UBER *TRIP H 03/13 PURCHASE San Francisco CA                                  -14.96      2,238.66
+03/16/2026  MYTENNIGHT* NIGHT24 03/14 PURCHASE LONDON                                     -26.06      2,212.60
+03/16/2026  STOP AND SAVE MARKET 03/14 MOBILE PURCHASE BERKELEY CA                         -5.95      2,206.65
+03/16/2026  APPLE.COM/BILL 03/14 PURCHASE 866-712-7753 CA                                  -9.99      2,196.66
+03/16/2026  MYTENNIGHT* NIGHT25 03/15 PURCHASE LONDON                                     -55.67      2,140.99
+03/16/2026  OF 03/15 PURCHASE London                                                      -40.00      2,100.99
+03/16/2026  LAS CABANAS RESTAURANT 03/15 MOBILE PURCHASE BERKELEY CA                      -32.73      2,068.26
+03/16/2026  SQ *MELT ME CREAMERY 03/15 MOBILE PURCHASE Berkeley CA                         -6.84      2,061.42
+03/16/2026  MYTENNIGHT* NIGHT26 03/16 PURCHASE LONDON                                     -26.06      2,035.36
+03/17/2026  MARK JASON SOLOFA MENS 03/16 PURCHASE GETSQUIRE.COM NY                        -85.00      1,950.36
+03/17/2026  MYTENNIGHT* NIGHT27 03/17 PURCHASE LONDON                                     -96.86      1,853.50
+03/18/2026  SSENSE 03/17 PURCHASE SSENSE.COM NY                                          -420.77      1,432.73
+03/18/2026  SQ *LEXIE'S FROZEN CUST 03/17 MOBILE PURCHASE Berkeley CA                      -7.00      1,425.73
+03/18/2026  MYTENNIGHT* NIGHT28 03/18 PURCHASE LONDON                                     -26.06      1,399.67
+03/18/2026  TMOBILE PREPD 03/18 PURCHASE BELLEVUE WA                                      -54.21      1,345.46
+03/19/2026  STOP AND SAVE MARKET 03/17 MOBILE PURCHASE BERKELEY CA                         -5.85      1,339.61
+03/19/2026  MYTENNIGHT* NIGHT29 03/19 PURCHASE LONDON                                     -55.67      1,283.94
+03/19/2026  Credit One Bank DES:Payment ID:81829100 INDN:FAIAZ KHAN CO ID:WEB000004 WEB      -63.28      1,220.66
+03/20/2026  Zelle payment from MOHAMMED KAMRUZZAMAN for "Eid Mubarak !"; Conf# 99c9vu5vt      100.00      1,320.66
+03/20/2026  SQ *MELT ME CREAMERY 03/19 MOBILE PURCHASE Berkeley CA                         -6.84      1,313.82
+03/20/2026  Zelle payment to Maanit for "Zachary"; Conf# rfbkz9e0y                        -21.00      1,292.82
+03/20/2026  Online Scheduled Payment to ACCT# 6506 Confirmation# XXXXX74137               -35.00      1,257.82
+03/23/2026  Transfer PAYPAL                                                               381.25      1,639.07
+03/23/2026  DD *DOORDASH CALIFORNI 03/20 PURCHASE 855-973-1040 CA                         -19.86      1,619.21
+03/23/2026  TRADER JOE S # 03/21 MOBILE PURCHASE BERKELEY CA                              -33.15      1,586.06
+03/23/2026  SNACK* YUME MORI 03/21 MOBILE PURCHASE XXX-XX682146 CA                         -7.52      1,578.54
+03/23/2026  Zelle payment to Giavonnia RachalAbrams Conf# g2sh2jkwt                      -160.00      1,418.54
+03/23/2026  CASH APP*FAIAZ KHAN*ADD 03/22 PMNT SENT Oakland CA                           -530.00        888.54
+03/23/2026  Zelle payment to Giavonnia RachalAbrams for "Bills"; Conf# g0s46q5m8         -280.00        608.54
+03/23/2026  OPENAI *CHATGPT SUBSCR 03/22 PURCHASE OPENAI.COM CA                           -23.00        585.54
+03/23/2026  Zelle payment to ANDREW SIU Conf# ngc6npifw                                  -400.00        185.54
+03/23/2026  CONCORA CREDIT DES:PAYMENT ID:XXXXXXXXXX96820 INDN:KHAN FAIAZ CO ID:XXXXX36526 WEB      -53.00        132.54
+03/24/2026  Cascade Security DES:PAY 025207 ID:6semk81h9g2 INDN:Faiaz Khan CO ID:XXXXX64001 PPD    2,128.40      2,260.94
+03/24/2026  FD *CA DMV 504 *SVC 03/23 PURCHASE 800-777-0133 CA                             -0.19      2,260.75
+03/24/2026  STOP AND SAVE MARKET 03/22 MOBILE PURCHASE BERKELEY CA                         -5.14      2,255.61
+03/24/2026  FD *CA DMV 504 03/23 MOBILE PURCHASE OAKLAND CA                                -9.00      2,246.61
+03/24/2026  Zelle payment to Samin Rahman for "Loan repay"; Conf# rtyhaf7ta              -500.00      1,746.61
+03/24/2026  Card Services VT DES:PAYMENT ID:1900552 INDN:Faiaz Khan CO ID: XXXXX4157 WEB      -15.00      1,731.61
+03/25/2026  Google One 03/23 PURCHASE XXX-XX30000 CA                                      -20.46      1,711.15
+03/25/2026  SP SHIELD SKINCARE 03/24 PURCHASE MYSHIELDSYSTE FL                            -45.95      1,665.20
+03/25/2026  SQ *LEXIE'S FROZEN CUST 03/24 MOBILE PURCHASE Berkeley CA                      -5.50      1,659.70

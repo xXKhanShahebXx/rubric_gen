@@ -1,0 +1,76 @@
+{
+  "note_family_id": "soap_note",
+  "version": "v0_2",
+  "label": "SOAP Note",
+  "documentation_contract": {
+    "inference_policy": "strict_grounded",
+    "uncertainty_policy": "explicit_only",
+    "required_section_ids": [
+      "subjective",
+      "objective",
+      "assessment",
+      "plan"
+    ],
+    "optional_section_ids": [
+      "medications"
+    ],
+    "style_rules": [
+      "Prefer concise clinical prose.",
+      "Use section headers."
+    ]
+  },
+  "section_specs": [
+    {
+      "section_id": "subjective",
+      "label": "Subjective",
+      "required": true,
+      "allowed_content": [
+        "history",
+        "symptoms",
+        "patient_reported_context"
+      ]
+    },
+    {
+      "section_id": "objective",
+      "label": "Objective",
+      "required": true,
+      "allowed_content": [
+        "vitals",
+        "exam",
+        "studies"
+      ]
+    },
+    {
+      "section_id": "assessment",
+      "label": "Assessment",
+      "required": true,
+      "allowed_content": [
+        "diagnoses",
+        "impression"
+      ]
+    },
+    {
+      "section_id": "plan",
+      "label": "Plan",
+      "required": true,
+      "allowed_content": [
+        "follow_up",
+        "procedures",
+        "medications"
+      ]
+    }
+  ],
+  "family_template_ids": [
+    "no_unsupported_diagnosis",
+    "no_unsupported_certainty",
+    "required_sections_note_family",
+    "chief_complaint_symptom_presence",
+    "symptom_detail_attributes",
+    "associated_symptom_or_negative",
+    "discussed_study_or_result_presence"
+  ],
+  "hard_gate_error_codes": [
+    "unsupported_inference",
+    "certainty_inflation"
+  ]
+}

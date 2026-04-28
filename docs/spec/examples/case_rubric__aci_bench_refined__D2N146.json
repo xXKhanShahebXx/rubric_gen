@@ -1,0 +1,346 @@
+{
+  "rubric_id": "aci_bench_refined__D2N146_rubric_v0_2",
+  "version": "v0_2",
+  "example_id": "aci_bench_refined__D2N146",
+  "note_family_id": "soap_note",
+  "ontology_version": "v0_2",
+  "note_family_version": "v0_2",
+  "hard_gates": [
+    {
+      "criterion_id": "aci_bench_refined__D2N146_no_unsupported_diagnosis",
+      "dimension_id": "dialogue_faithfulness",
+      "label": "No Unsupported High-Risk Inferences",
+      "requirement": "Do not introduce high-risk conditions or critical specifics that never appear in the dialogue or reviewed encounter content.",
+      "severity_tier": "catastrophic",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "er for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several way from some high fat food but i'm just still having a lot of",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "no_unsupported_diagnosis",
+      "subdimension_id": "hallucination",
+      "compile_rationale": "Universal starter gate; anchored to salient dialogue evidence for this case.",
+      "eval_kind": "hard_gate_unsupported_bundle",
+      "judge_hints": {
+        "check": "high_risk_terms_in_note_vs_dialogue"
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_no_unsupported_certainty",
+      "dimension_id": "dialogue_faithfulness",
+      "label": "No Unsupported Diagnostic Certainty",
+      "requirement": "Do not state diagnoses or complications as definitively established when the encounter language is probabilistic or hedged, unless exam or reviewed results justify certainty.",
+      "severity_tier": "catastrophic",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "l limits at four . one millimeters now let's talk a little bit about my assessment and plan for you okay i do believe you have some mild cholecystitis with gallstones i do n't appreciate any frank obstruction but it look",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "no_unsupported_certainty",
+      "subdimension_id": "hallucination",
+      "compile_rationale": "Dialogue contains hedging language; flag definitive chart language that overshoots evidence.",
+      "eval_kind": "hard_gate_certainty_vs_dialogue",
+      "judge_hints": {
+        "hedge_detected_in_dialogue": true
+      }
+    }
+  ],
+  "soft_checks": [
+    {
+      "criterion_id": "aci_bench_refined__D2N146_required_sections",
+      "dimension_id": "documentation_structure",
+      "label": "Required Sections (SOAP Note)",
+      "requirement": "For note family `soap_note`, include clear section coverage for: subjective, objective, assessment, plan.",
+      "severity_tier": "essential",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "note_family_spec",
+          "quote": "[\"subjective\", \"objective\", \"assessment\", \"plan\"]",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "required_sections_note_family",
+      "subdimension_id": "section_presence",
+      "compile_rationale": "Instantiated from note-family required sections (header patterns are heuristic).",
+      "eval_kind": "section_header_coverage",
+      "judge_hints": {
+        "sections": [
+          {
+            "section_id": "subjective",
+            "label": "Subjective / S",
+            "patterns": [
+              "(?m)^\\s*S:\\s*",
+              "(?mi)^\\s*\\*{0,2}\\s*subjective"
+            ]
+          },
+          {
+            "section_id": "objective",
+            "label": "Objective / O",
+            "patterns": [
+              "(?m)^\\s*O:\\s*",
+              "(?mi)^\\s*\\*{0,2}\\s*objective"
+            ]
+          },
+          {
+            "section_id": "assessment",
+            "label": "Assessment / A",
+            "patterns": [
+              "(?m)^\\s*A:\\s*",
+              "(?mi)^\\s*\\*{0,2}\\s*assessment"
+            ]
+          },
+          {
+            "section_id": "plan",
+            "label": "Plan / P",
+            "patterns": [
+              "(?m)^\\s*P:\\s*",
+              "(?mi)^\\s*\\*{0,2}\\s*plan"
+            ]
+          }
+        ],
+        "note_family_id": "soap_note"
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_chief_complaint_alignment",
+      "dimension_id": "clinical_completeness",
+      "label": "Chief Complaint / Presenting Symptom Alignment",
+      "requirement": "Document the presenting problem using terms consistent with the patient narrative.",
+      "severity_tier": "essential",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "good morning bobby how are you\n[patient] i'm doing okay i as you're aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones a",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "chief_complaint_symptom_presence",
+      "subdimension_id": "symptom_detail",
+      "compile_rationale": "Compiled because a chief-complaint phrase or structured visit motivation was available.",
+      "eval_kind": "dialogue_anchor_terms_in_note",
+      "judge_hints": {
+        "terms": [
+          "pain",
+          "belly"
+        ],
+        "min_terms_matched": 1
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_symptom_detail_attributes",
+      "dimension_id": "clinical_completeness",
+      "label": "Salient Symptom Attributes Discussed",
+      "requirement": "When timing, location, severity, or triggers are discussed, reflect them in the note.",
+      "severity_tier": "essential",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "around mealtimes how how does that pain kinda wax and wane for you\n[patient] most of the time it comes right after i eat\n[doctor] okay\n[patient] but it also can come on a couple of hours after i eat also so it's either",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        },
+        {
+          "source": "dialogue",
+          "quote": "pain that you feel\n[patient] well it's it's on the right hand side of my belly it's it's right underneath my ribs and it feels like a a squeezing severe pain it comes and goes but when it comes it's really severe and i",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        },
+        {
+          "source": "dialogue",
+          "quote": "ient] i'm doing okay i as you're aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "symptom_detail_attributes",
+      "subdimension_id": "symptom_detail",
+      "compile_rationale": "Compiled from case signals (meal pattern, duration, location/severity cues).",
+      "eval_kind": "symptom_detail_bundle",
+      "judge_hints": {
+        "patterns": [
+          {
+            "id": "meal_related",
+            "label": "Meal-related pattern",
+            "dialogue_detected": true,
+            "note_keywords": [
+              "after eating",
+              "after meals",
+              "postprandial",
+              "meal",
+              "meals",
+              "eating",
+              "related to eating",
+              "with meals",
+              "high fat",
+              "fatty",
+              "diet",
+              "food",
+              "foods"
+            ],
+            "anchor_quote": "around mealtimes how how does that pain kinda wax and wane for you\n[patient] most of the time it comes right after i eat\n[doctor] okay\n[patient] but it also can come on a couple of hours after i eat also so it's either"
+          },
+          {
+            "id": "location_severity",
+            "label": "Location and severity",
+            "dialogue_detected": true,
+            "note_keywords": [
+              "right",
+              "rib",
+              "quadrant",
+              "8",
+              "severe",
+              "scale"
+            ],
+            "require_min_keyword_hits": 2,
+            "anchor_quote": "pain that you feel\n[patient] well it's it's on the right hand side of my belly it's it's right underneath my ribs and it feels like a a squeezing severe pain it comes and goes but when it comes it's really severe and i"
+          },
+          {
+            "id": "duration",
+            "label": "Duration or time course",
+            "dialogue_detected": true,
+            "note_keywords": [
+              "week",
+              "month",
+              "day",
+              "several"
+            ],
+            "require_min_keyword_hits": 1,
+            "anchor_quote": "ient] i'm doing okay i as you're aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several"
+          }
+        ]
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_pertinent_negative_vomiting",
+      "dimension_id": "clinical_completeness",
+      "label": "Document Vomiting Denial (when discussed)",
+      "requirement": "If the patient denies vomiting, document that pertinent negative.",
+      "severity_tier": "important",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "ad some what i i would describe as low grade fevers and yes you're right i have feel nauseated but i have n't thrown up\n[doctor] okay so if it's okay with you i'm gon na go ahead and do a quick physical exam your vital s",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "associated_symptom_or_negative",
+      "subdimension_id": "ros_negatives",
+      "compile_rationale": "Patient denied vomiting in dialogue; mirror as a relevant negative.",
+      "eval_kind": "relevant_negative_mirror",
+      "judge_hints": {
+        "dialogue_markers": [
+          "haven't thrown up",
+          "have n't thrown up",
+          "denies vomiting",
+          "no vomiting"
+        ],
+        "note_markers": [
+          "denies vomiting",
+          "deny vomiting",
+          "no vomiting",
+          "denied vomiting",
+          "has not vomited"
+        ]
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_associated_symptom_fever",
+      "dimension_id": "clinical_completeness",
+      "label": "Document Fever Symptom (when discussed)",
+      "requirement": "If fevers are discussed, document fever / low-grade fever status in the note.",
+      "severity_tier": "important",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "ome to see\n[patient] okay cool\n[doctor] so i'm just curious talking about your symptoms here have you had any fevers you mentioned something about nausea but have you actually vomited from those symptoms\n[patient] there'",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "associated_symptom_or_negative",
+      "subdimension_id": "ros_negatives",
+      "compile_rationale": "Fever mentioned in dialogue; should appear in ROS or HPI.",
+      "eval_kind": "anchor_terms_presence",
+      "judge_hints": {
+        "terms": [
+          "fever",
+          "febrile",
+          "afebrile",
+          "temperature"
+        ],
+        "min_terms_matched": 1
+      }
+    },
+    {
+      "criterion_id": "aci_bench_refined__D2N146_discussed_studies_results",
+      "dimension_id": "clinical_completeness",
+      "label": "Discussed Imaging or Labs in Note",
+      "requirement": "When imaging or labs are discussed in the visit, ensure the note references them.",
+      "severity_tier": "important",
+      "verdict_type": "binary",
+      "evidence_anchors": [
+        {
+          "source": "dialogue",
+          "quote": "aware doctor miller sent me over for this pain in my belly that i've had for several weeks they did he did an ultrasound and and said i had gallstones and they recommended i stay several way from some high fat food but i",
+          "speaker": null,
+          "section_id": null,
+          "start_char": null,
+          "end_char": null
+        }
+      ],
+      "template_id": "discussed_study_or_result_presence",
+      "subdimension_id": "symptom_detail",
+      "compile_rationale": "Encounter discusses imaging and/or labs; compile a documentation presence check.",
+      "eval_kind": "discussed_study_mentioned_in_note",
+      "judge_hints": {
+        "study_terms": [
+          "ultrasound",
+          "ct"
+        ]
+      }
+    }
+  ],
+  "aggregation": {
+    "hard_gate_policy": "all_must_pass",
+    "minimum_soft_score": 0.75,
+    "soft_dimension_weights": {
+      "clinical_completeness": 0.45,
+      "documentation_structure": 0.25,
+      "dialogue_faithfulness": 0.3
+    }
+  }
+}

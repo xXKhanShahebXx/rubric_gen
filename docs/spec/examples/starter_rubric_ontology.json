@@ -1,0 +1,204 @@
+{
+  "ontology_id": "clinical_note_core",
+  "version": "v0_2",
+  "severity_tiers": [
+    "catastrophic",
+    "essential",
+    "important",
+    "optional"
+  ],
+  "dimensions": [
+    {
+      "dimension_id": "dialogue_faithfulness",
+      "label": "Dialogue Faithfulness",
+      "description": "The note must remain grounded in the dialogue.",
+      "hard_gate_eligible": true,
+      "subdimensions": [
+        {
+          "subdimension_id": "hallucination",
+          "label": "Hallucination"
+        },
+        {
+          "subdimension_id": "contradiction",
+          "label": "Contradiction"
+        }
+      ]
+    },
+    {
+      "dimension_id": "clinical_completeness",
+      "label": "Clinical Completeness",
+      "description": "The note should capture salient clinical content from the encounter.",
+      "hard_gate_eligible": false,
+      "subdimensions": [
+        {
+          "subdimension_id": "symptom_detail",
+          "label": "Symptom detail"
+        },
+        {
+          "subdimension_id": "ros_negatives",
+          "label": "Pertinent negatives"
+        }
+      ]
+    },
+    {
+      "dimension_id": "documentation_structure",
+      "label": "Documentation Structure",
+      "description": "The note should respect the expected section scaffold for its note family.",
+      "hard_gate_eligible": false,
+      "subdimensions": [
+        {
+          "subdimension_id": "section_presence",
+          "label": "Section presence"
+        }
+      ]
+    }
+  ],
+  "criterion_templates": [
+    {
+      "template_id": "no_unsupported_diagnosis",
+      "dimension_id": "dialogue_faithfulness",
+      "label": "No Unsupported High-Risk Inferences",
+      "description": "Do not introduce catastrophic-risk conditions or unsupported specifics absent from the encounter narrative.",
+      "severity_tier": "catastrophic",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_or_reference",
+      "hard_gate_default": true,
+      "typical_failure_codes": [
+        "unsupported_inference",
+        "certainty_inflation"
+      ],
+      "subdimension_id": "hallucination",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "no_unsupported_certainty",
+      "dimension_id": "dialogue_faithfulness",
+      "label": "No Unsupported Diagnostic Certainty",
+      "description": "Avoid definitive diagnostic language for entities not clearly supported by dialogue, exam, or reviewed results as discussed.",
+      "severity_tier": "catastrophic",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_or_reference",
+      "hard_gate_default": true,
+      "typical_failure_codes": [
+        "certainty_inflation"
+      ],
+      "subdimension_id": "hallucination",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "required_sections_note_family",
+      "dimension_id": "documentation_structure",
+      "label": "Required Sections for Note Family",
+      "description": "Include the section headings expected for this note family when applicable.",
+      "severity_tier": "essential",
+      "default_verdict_type": "binary",
+      "evidence_policy": "note_layout",
+      "hard_gate_default": false,
+      "typical_failure_codes": [
+        "section_missing"
+      ],
+      "subdimension_id": "section_presence",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "chief_complaint_symptom_presence",
+      "dimension_id": "clinical_completeness",
+      "label": "Chief Complaint / Presenting Symptom Alignment",
+      "description": "Reflect the presenting problem described in the visit when one is extractable.",
+      "severity_tier": "essential",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_only",
+      "hard_gate_default": false,
+      "typical_failure_codes": [
+        "omission"
+      ],
+      "subdimension_id": "symptom_detail",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "symptom_detail_attributes",
+      "dimension_id": "clinical_completeness",
+      "label": "Salient Symptom Attributes",
+      "description": "Capture location, severity, duration, or trigger/pattern when discussed.",
+      "severity_tier": "essential",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_only",
+      "hard_gate_default": false,
+      "typical_failure_codes": [
+        "omission"
+      ],
+      "subdimension_id": "symptom_detail",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "associated_symptom_or_negative",
+      "dimension_id": "clinical_completeness",
+      "label": "Associated Symptom or Relevant Negative",
+      "description": "When the dialogue documents an associated symptom or a pertinent negative, mirror it.",
+      "severity_tier": "important",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_only",
+      "hard_gate_default": false,
+      "typical_failure_codes": [
+        "omission",
+        "negation_flip"
+      ],
+      "subdimension_id": "ros_negatives",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    },
+    {
+      "template_id": "discussed_study_or_result_presence",
+      "dimension_id": "clinical_completeness",
+      "label": "Discussed Study or Result Presence",
+      "description": "When imaging or labs are reviewed in the visit, document them in the note.",
+      "severity_tier": "important",
+      "default_verdict_type": "binary",
+      "evidence_policy": "dialogue_or_reference",
+      "hard_gate_default": false,
+      "typical_failure_codes": [
+        "omission"
+      ],
+      "subdimension_id": "symptom_detail",
+      "provisional_discovered": false,
+      "note_family_scope": null
+    }
+  ],
+  "error_taxonomy": [
+    {
+      "error_code": "unsupported_inference",
+      "label": "Unsupported Inference",
+      "description": "The note adds a conclusion not grounded in the evidence.",
+      "severity_tier": "catastrophic"
+    },
+    {
+      "error_code": "certainty_inflation",
+      "label": "Certainty Inflation",
+      "description": "Definitive language without matching encounter support.",
+      "severity_tier": "catastrophic"
+    },
+    {
+      "error_code": "omission",
+      "label": "Omission",
+      "description": "Clinically relevant dialogue content missing from the note.",
+      "severity_tier": "important"
+    },
+    {
+      "error_code": "section_missing",
+      "label": "Section Missing",
+      "description": "Expected documentation section not clearly present.",
+      "severity_tier": "essential"
+    },
+    {
+      "error_code": "negation_flip",
+      "label": "Negation Flip",
+      "description": "Pertinent negative or denial misrepresented.",
+      "severity_tier": "important"
+    }
+  ]
+}
