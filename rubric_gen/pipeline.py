@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 from rubric_gen.candidate_generation import build_candidate_pool
 from rubric_gen.config import PipelineConfig
@@ -82,8 +84,19 @@ class RubricPipeline:
             satisfaction_cache=self.rubric_satisfaction_cache,
         )
 
-    def _example_artifact_path(self, example_id: str):
+    def _example_artifact_path(self, example_id: str) -> Path:
         return self.layout.examples_dir / f"{example_id}.json"
+
+    def _process_example_to_disk(self, example) -> Dict[str, object]:
+        """Run a single example end-to-end and persist its artifact.
+
+        Safe to call concurrently from multiple sample workers: the underlying
+        caches use an RLock and `write_json` writes one file in one open/close
+        block.
+        """
+        artifact = self._run_example(example)
+        write_json(self._example_artifact_path(example.example_id), artifact)
+        return artifact
 
     def _run_example(self, example) -> Dict[str, object]:
         candidates = build_candidate_pool(
@@ -237,16 +250,41 @@ class RubricPipeline:
             },
         )
 
-        example_artifacts: List[Dict[str, object]] = []
-        for example in examples:
+        sample_workers = max(1, int(self.config.sample_workers or 1))
+
+        # Resumable bookkeeping: split into already-finished (read from disk) and
+        # pending (need processing) so we never re-submit a finished example to a
+        # worker. Per-example artifact writes happen inline inside
+        # `_process_example_to_disk`; both that write and the underlying JSONL
+        # caches are thread-safe (storage.JsonlCache holds an RLock around set()),
+        # so cross-sample parallelism does not need additional synchronisation.
+        pending: List[Tuple[int, object]] = []
+        results_by_index: Dict[int, Dict[str, object]] = {}
+        for index, example in enumerate(examples):
             artifact_path = self._example_artifact_path(example.example_id)
             if self.config.resume and artifact_path.exists():
-                example_artifacts.append(read_json(artifact_path))
-                continue
+                results_by_index[index] = read_json(artifact_path)
+            else:
+                pending.append((index, example))
 
-            example_artifact = self._run_example(example)
-            write_json(artifact_path, example_artifact)
-            example_artifacts.append(example_artifact)
+        if sample_workers <= 1:
+            for index, example in pending:
+                results_by_index[index] = self._process_example_to_disk(example)
+        else:
+            with ThreadPoolExecutor(max_workers=sample_workers) as pool:
+                futures = {
+                    pool.submit(self._process_example_to_disk, example): index
+                    for index, example in pending
+                }
+                for future in as_completed(futures):
+                    index = futures[future]
+                    results_by_index[index] = future.result()
+
+        # Restore dataset order so reports remain deterministic regardless of
+        # which sample worker happened to finish first.
+        example_artifacts: List[Dict[str, object]] = [
+            results_by_index[index] for index in range(len(examples))
+        ]
 
         report_paths = write_reports(self.layout.run_dir, example_artifacts)
         return {

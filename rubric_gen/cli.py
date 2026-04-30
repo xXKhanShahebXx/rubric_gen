@@ -126,7 +126,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resume", action="store_true", help="Skip examples that already have per-example artifacts.")
     parser.add_argument("--dry-run", action="store_true", help="Run with heuristic fallbacks and no provider calls.")
-    parser.add_argument("--max-workers", type=int, default=4, help="Maximum concurrent rubric-evaluation workers.")
+    parser.add_argument("--max-workers", type=int, default=4, help="Maximum concurrent rubric-evaluation workers (parallelism within one example).")
+    parser.add_argument(
+        "--sample-workers",
+        type=int,
+        default=1,
+        help=(
+            "Number of examples to process concurrently. Default 1 keeps the "
+            "original sequential behaviour. Cross-sample parallelism multiplies "
+            "with --max-workers, so --sample-workers 4 --max-workers 4 issues up "
+            "to 16 concurrent rubric-satisfaction calls. Per-example artifact "
+            "writes and the JSONL caches are already thread-safe, so a clean "
+            "Ctrl+C is recoverable via --resume."
+        ),
+    )
     parser.add_argument("--target-candidates", type=int, default=None, help="Override the target number of candidate notes per example.")
     parser.add_argument("--decomposition-threshold", type=int, default=None, help="Override the RRD decomposition threshold.")
     parser.add_argument("--max-initial-rubrics", type=int, default=None, help="Override the initial rubric cap.")
@@ -201,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         resume=args.resume,
         dry_run=args.dry_run,
         max_workers=args.max_workers,
+        sample_workers=args.sample_workers,
         target_candidate_count=args.target_candidates,
         decomposition_threshold=args.decomposition_threshold,
         max_initial_rubrics=args.max_initial_rubrics,

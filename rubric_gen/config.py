@@ -110,6 +110,7 @@ class PipelineConfig:
     resume: bool = False
     dry_run: bool = False
     max_workers: int = DEFAULT_MAX_WORKERS
+    sample_workers: int = 1
     target_candidate_count: int = DEFAULT_TARGET_CANDIDATES
     split: str = "all"
     train_size: int = 0
@@ -484,6 +485,7 @@ def build_config(
     resume: bool,
     dry_run: bool,
     max_workers: int,
+    sample_workers: int = 1,
     target_candidate_count: Optional[int] = None,
     decomposition_threshold: Optional[int] = None,
     max_initial_rubrics: Optional[int] = None,
@@ -640,6 +642,7 @@ def build_config(
         resume=resume,
         dry_run=dry_run,
         max_workers=max(1, max_workers),
+        sample_workers=max(1, sample_workers),
         target_candidate_count=target_candidate_count or DEFAULT_TARGET_CANDIDATES,
         split=effective_split,
         train_size=effective_train_size,
