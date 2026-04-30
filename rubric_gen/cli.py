@@ -3,14 +3,22 @@ from __future__ import annotations
 import argparse
 import json
 
-from rubric_gen.config import build_config
+from rubric_gen.config import (
+    ALLOWED_PRESETS,
+    ALLOWED_SPLITS,
+    DEFAULT_NUM_SHARDS,
+    DEFAULT_SHARD_INDEX,
+    DEFAULT_TRAIN_SIZE,
+    DEFAULT_VAL_SIZE,
+    build_config,
+)
 from rubric_gen.comparison_pipeline import ProposerComparisonPipeline
 from rubric_gen.pipeline import RubricPipeline
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the RRD rubric generation pipeline.")
-    parser.add_argument("--dataset-path", default=None, help="Path to the input JSON dataset.")
+    parser.add_argument("--dataset-path", default=None, help="Path to the input JSON or JSONL dataset.")
     parser.add_argument("--output-dir", default=None, help="Root directory for artifacts and caches.")
     parser.add_argument("--run-name", default=None, help="Name for this pipeline run.")
     parser.add_argument(
@@ -41,6 +49,81 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", type=int, default=0, help="Start offset into the dataset.")
     parser.add_argument("--limit", type=int, default=0, help="If >0, only process this many examples.")
     parser.add_argument("--source-filter", default=None, help="Only process examples whose source contains this string.")
+    parser.add_argument(
+        "--split",
+        choices=list(ALLOWED_SPLITS),
+        default=None,
+        help=(
+            "Deterministic train/val split selector applied before --start/--limit. "
+            "'train' takes the first --train-size rows; 'val' takes the next --val-size "
+            "rows; 'all' (default when no preset is active) keeps every row."
+        ),
+    )
+    parser.add_argument(
+        "--train-size",
+        type=int,
+        default=None,
+        help=(
+            f"Number of rows reserved for training. Defaults to the preset's value "
+            f"or {DEFAULT_TRAIN_SIZE} when --preset judgebench-v47-medical is set."
+        ),
+    )
+    parser.add_argument(
+        "--val-size",
+        type=int,
+        default=None,
+        help=(
+            f"Number of rows reserved for validation, taken from the rows after the "
+            f"training span. Defaults to {DEFAULT_VAL_SIZE} under the medical preset."
+        ),
+    )
+    parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=None,
+        help=(
+            "Number of equal-sized contiguous shards to split the training span into. "
+            f"Defaults to {DEFAULT_NUM_SHARDS} under the medical preset. --train-size "
+            "must be evenly divisible by this value."
+        ),
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=DEFAULT_SHARD_INDEX,
+        help=(
+            "Which shard of the training span this run should process (0-indexed). "
+            "Three team members run shard 0 / 1 / 2 on separate machines for the "
+            "default 3000-row training span."
+        ),
+    )
+    parser.add_argument(
+        "--preset",
+        choices=list(ALLOWED_PRESETS),
+        default=None,
+        help=(
+            "Lock in a known-good configuration. 'judgebench-v47-medical' applies the "
+            "rubric-judge core that JudgeBench v4.7 (80.57%% on val_350) is built on, "
+            "adapted for single-response medical Q&A: GPT-4o for both rubric proposal "
+            "and rubric satisfaction, multi-model writers for candidate diversity, and "
+            "the 3000/2000/3-shard training layout. User-supplied flags still win over "
+            "the preset."
+        ),
+    )
+    parser.add_argument(
+        "--reference-field",
+        dest="reference_fields",
+        action="append",
+        default=None,
+        help=(
+            "Repeatable column name to promote into the gold/reference slot during "
+            "loading. The first matching column wins, then the loader falls back to "
+            "the built-in reference field list (reference_artifact, reference_output, "
+            "gold_output, target, ...). Use this to mark a generic field like "
+            "'response' as gold so reference_top1_rate becomes meaningful. The "
+            "judgebench-v47-medical preset sets this to 'response' by default."
+        ),
+    )
     parser.add_argument("--resume", action="store_true", help="Skip examples that already have per-example artifacts.")
     parser.add_argument("--dry-run", action="store_true", help="Run with heuristic fallbacks and no provider calls.")
     parser.add_argument("--max-workers", type=int, default=4, help="Maximum concurrent rubric-evaluation workers.")
@@ -131,6 +214,13 @@ def main(argv: list[str] | None = None) -> int:
         downstream_judge_model=args.downstream_judge_model,
         paper_pairwise_label_mode=args.paper_pairwise_label_mode,
         paper_pairwise_judge_model=args.paper_pairwise_judge_model,
+        split=args.split,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        num_shards=args.num_shards,
+        shard_index=args.shard_index,
+        preset=args.preset,
+        reference_fields=args.reference_fields,
     )
     if config.paper_mode:
         from rubric_gen.paper_pipeline import PaperModePipeline
@@ -142,3 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         result = RubricPipeline(config).run()
     print(json.dumps(result, indent=2))
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

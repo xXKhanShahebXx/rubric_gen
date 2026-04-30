@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from rubric_gen.types import ExampleRecord
 
@@ -88,6 +88,8 @@ _TASK_PROMPT_KEYS: Sequence[str] = (
     "task",
     "request",
     "user_request",
+    "Question",
+    "question",
 )
 
 _REFERENCE_ARTIFACT_KEYS: Sequence[str] = (
@@ -133,6 +135,7 @@ _STRUCTURED_SUMMARY_KEYS: Sequence[str] = (
 _KNOWN_ROW_KEYS = {
     "source",
     "source_id",
+    "id",
     "dataset_subset",
     "task_profile_id",
     "task_family_id",
@@ -269,6 +272,92 @@ def _rows_from_payload(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _read_dataset_rows(dataset_path: Path) -> Tuple[List[Dict[str, Any]], Any]:
+    """Read rows from either a JSON or JSONL dataset file.
+
+    Returns (rows, payload). For JSONL files `payload` is the list of rows.
+    """
+    suffix = dataset_path.suffix.lower()
+    if suffix in {".jsonl", ".ndjson"}:
+        rows: List[Dict[str, Any]] = []
+        with dataset_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    rows.append(record)
+        return rows, rows
+
+    with dataset_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return _rows_from_payload(payload), payload
+
+
+def _apply_split_and_shard(
+    rows: List[Dict[str, Any]],
+    *,
+    split: Optional[str],
+    train_size: int,
+    val_size: int,
+    num_shards: int,
+    shard_index: int,
+) -> List[Dict[str, Any]]:
+    """Slice rows by train/val split and shard.
+
+    Splitting is deterministic and order-preserving so that team members on
+    different machines select identical shards from the same source file:
+
+    * `split="train"` selects the first `train_size` rows, then partitions
+      them into `num_shards` contiguous shards and returns shard `shard_index`.
+    * `split="val"`   selects rows `[train_size, train_size + val_size)`.
+    * `split="all"` / `None` returns all rows unchanged.
+
+    The shard partition is contiguous (rows 0..N/K-1 → shard 0, etc.). For 3000
+    train rows with `num_shards=3`, shard 0 covers rows [0, 1000), shard 1
+    covers [1000, 2000), and shard 2 covers [2000, 3000).
+    """
+    if split is None or split == "all":
+        return rows
+
+    if split not in {"train", "val"}:
+        raise ValueError(
+            f"split must be one of 'train', 'val', or 'all'; got '{split}'."
+        )
+
+    if train_size < 0 or val_size < 0:
+        raise ValueError("train_size and val_size must be non-negative.")
+    if num_shards < 1:
+        raise ValueError("num_shards must be >= 1.")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(
+            f"shard_index must be in [0, {num_shards}); got {shard_index}."
+        )
+
+    if split == "val":
+        return rows[train_size : train_size + val_size]
+
+    train_rows = rows[:train_size]
+    if num_shards == 1:
+        return train_rows
+
+    shard_size = len(train_rows) // num_shards
+    remainder = len(train_rows) % num_shards
+    if remainder != 0:
+        raise ValueError(
+            f"train_size ({train_size}) is not evenly divisible by "
+            f"num_shards ({num_shards}); refusing to silently truncate. "
+            "Either pick a divisible train_size or pre-trim the source file."
+        )
+    start = shard_index * shard_size
+    end = start + shard_size
+    return train_rows[start:end]
+
+
 def _build_example_id(source: str, source_id: str, row_index: int) -> str:
     left = source.lower().replace(" ", "_").replace("-", "_")
     right = source_id.strip().replace(" ", "_") or str(row_index)
@@ -280,11 +369,34 @@ def load_examples(
     start: int = 0,
     limit: int = 0,
     source_filter: Optional[str] = None,
+    split: Optional[str] = None,
+    train_size: int = 0,
+    val_size: int = 0,
+    num_shards: int = 1,
+    shard_index: int = 0,
+    reference_field_overrides: Optional[Sequence[str]] = None,
 ) -> List[ExampleRecord]:
-    with dataset_path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+    rows, payload = _read_dataset_rows(dataset_path)
+    rows = _apply_split_and_shard(
+        rows,
+        split=split,
+        train_size=train_size,
+        val_size=val_size,
+        num_shards=num_shards,
+        shard_index=shard_index,
+    )
 
-    rows = _rows_from_payload(payload)
+    # Field names supplied via reference_field_overrides take priority over the
+    # default _REFERENCE_ARTIFACT_KEYS, letting a workflow promote a generic
+    # column (e.g. medical_rl_prompts' "response") into the gold/reference slot
+    # without changing the global default for other datasets.
+    effective_reference_keys: List[str] = []
+    seen_keys: set[str] = set()
+    for key in list(reference_field_overrides or []) + list(_REFERENCE_ARTIFACT_KEYS):
+        if key and key not in seen_keys:
+            effective_reference_keys.append(key)
+            seen_keys.add(key)
+
     normalized: List[ExampleRecord] = []
 
     for row_index, row in enumerate(rows):
@@ -294,11 +406,25 @@ def load_examples(
             continue
 
         source = source or task_profile_id
-        source_id = _clean_text(row.get("source_id")) or str(row_index)
+        source_id = (
+            _clean_text(row.get("source_id"))
+            or _clean_text(row.get("id"))
+            or str(row_index)
+        )
         source_context = _collect_source_context(row)
         task_prompt = _first_present_text(row, _TASK_PROMPT_KEYS) or _default_prompt_for_profile(task_profile_id)
-        reference_artifact = _first_present_text(row, _REFERENCE_ARTIFACT_KEYS)
+        reference_artifact = _first_present_text(row, effective_reference_keys)
         augmented_artifact = _first_present_text(row, _AUGMENTED_ARTIFACT_KEYS)
+        # When a field appears in both lists (e.g. `response` after the medical
+        # preset promotes it), the same text would otherwise build two anchor
+        # candidates that dedupe down to one. Suppress the augmented copy so the
+        # gold semantics are preserved end-to-end.
+        if (
+            reference_artifact
+            and augmented_artifact
+            and reference_artifact == augmented_artifact
+        ):
+            augmented_artifact = ""
         artifact_truncated = _first_present_text(row, _TRUNCATED_ARTIFACT_KEYS)
         structured_summary = None
         for key in _STRUCTURED_SUMMARY_KEYS:

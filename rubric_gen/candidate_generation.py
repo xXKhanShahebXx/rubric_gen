@@ -10,7 +10,7 @@ from rubric_gen.storage import JsonlCache, make_cache_key
 from rubric_gen.types import CandidateNote, ExampleRecord, ModelSpec
 
 
-STYLE_INSTRUCTIONS: Dict[str, str] = {
+NOTE_STYLE_INSTRUCTIONS: Dict[str, str] = {
     "structured": (
         "Write a clinically faithful note with clear section headers such as chief complaint, "
         "history, review of systems, exam, assessment, and plan."
@@ -26,18 +26,80 @@ STYLE_INSTRUCTIONS: Dict[str, str] = {
     ),
 }
 
+# QA / response-style writers used for non-note task profiles such as
+# `general_instruction_following`, `clinical_decision_support`, and the medical
+# Q&A workflow. The prior STYLE_INSTRUCTIONS-only setup forced every writer to
+# emit a clinical note even when the task was a plain question; that biased the
+# discovered rubrics toward clinical-note structure and made gold Q&A answers
+# fail rubric satisfaction.
+QA_STYLE_INSTRUCTIONS: Dict[str, str] = {
+    "direct": (
+        "Answer the question directly and concisely. Lead with the answer, then "
+        "give one sentence of justification grounded in established medical facts."
+    ),
+    "explained": (
+        "Answer the question and briefly explain the reasoning. Cite the key "
+        "mechanism, finding, or guideline that supports the answer in 2-4 "
+        "sentences."
+    ),
+    "comprehensive": (
+        "Answer the question thoroughly. Cover the conclusion, the supporting "
+        "reasoning, and any clinically relevant nuances or caveats. Stay grounded "
+        "in established medical knowledge and avoid speculation."
+    ),
+    "clinical_reasoning": (
+        "Answer the question using a structured clinical reasoning chain: name "
+        "the key findings, walk through the differential or mechanism, then state "
+        "the final answer. Keep the answer focused and avoid invented details."
+    ),
+}
+
+# Backwards-compatible alias preserved for any external code that imported the
+# old name. Defaults to the note styles, which is the original behaviour.
+STYLE_INSTRUCTIONS: Dict[str, str] = NOTE_STYLE_INSTRUCTIONS
+
+NOTE_TASK_PROFILE_IDS: Tuple[str, ...] = (
+    "note_documentation",
+    "documentation_variants",
+)
+
+
+def _is_note_task(example: ExampleRecord) -> bool:
+    profile_id = (example.task_profile_id or "").strip().lower()
+    return profile_id in NOTE_TASK_PROFILE_IDS
+
+
+def _styles_for(example: ExampleRecord) -> Dict[str, str]:
+    return NOTE_STYLE_INSTRUCTIONS if _is_note_task(example) else QA_STYLE_INSTRUCTIONS
+
+
+def _system_prompt_for(example: ExampleRecord) -> str:
+    if _is_note_task(example):
+        return (
+            "You are an expert clinical documentation assistant. "
+            "Produce only the clinical note."
+        )
+    return (
+        "You are an expert medical assistant answering a medical question for a "
+        "clinician. Produce only the answer to the question."
+    )
+
+
+def _context_label_for(example: ExampleRecord) -> str:
+    return "Transcript" if _is_note_task(example) else "Context"
+
 
 def _normalize_for_dedupe(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
 def _candidate_prompt(example: ExampleRecord, style_name: str) -> str:
-    style_instruction = STYLE_INSTRUCTIONS[style_name]
-    return (
-        f"{example.task_prompt}\n"
-        f"Style instruction: {style_instruction}\n\n"
-        f"Transcript:\n{example.conversation}\n"
-    )
+    styles = _styles_for(example)
+    style_instruction = styles[style_name]
+    parts = [example.task_prompt, f"Style instruction: {style_instruction}"]
+    if example.conversation.strip():
+        parts.append(f"\n{_context_label_for(example)}:\n{example.conversation}")
+    return "\n".join(parts) + "\n"
 
 
 def _quality_bucket_for_model(spec: ModelSpec) -> str:
@@ -87,10 +149,11 @@ def _anchor_candidates(example: ExampleRecord) -> List[CandidateNote]:
 def _generation_plan(
     writer_models: Sequence[ModelSpec],
     target_count: int,
+    example: Optional[ExampleRecord] = None,
 ) -> List[Tuple[ModelSpec, str, float, int]]:
     if not writer_models or target_count <= 0:
         return []
-    style_names = list(STYLE_INSTRUCTIONS)
+    style_names = list(_styles_for(example) if example is not None else NOTE_STYLE_INSTRUCTIONS)
     temperatures = [0.0, 0.2, 0.3, 0.1]
     jobs: List[Tuple[ModelSpec, str, float, int]] = []
     for index in range(target_count):
@@ -200,12 +263,25 @@ def build_paper_candidate_pool(
 
     if not config.dry_run and router is not None:
         for spec, temperature, index in _paper_generation_plan(config.writer_models, config.target_candidate_count):
-            prompt = (
-                f"{example.task_prompt}\n"
-                "Produce one clinically faithful note for this case. Use your own best judgment on "
-                "structure and wording, but stay grounded in the prompt.\n\n"
-                f"Transcript:\n{example.conversation}\n"
+            if _is_note_task(example):
+                instruction = (
+                    "Produce one clinically faithful note for this case. Use your "
+                    "own best judgment on structure and wording, but stay grounded "
+                    "in the prompt."
+                )
+            else:
+                instruction = (
+                    "Answer the question accurately using your own best judgment on "
+                    "structure and wording. Stay grounded in established medical "
+                    "knowledge and avoid speculation."
+                )
+            context_section = (
+                f"\n\n{_context_label_for(example)}:\n{example.conversation}\n"
+                if example.conversation.strip()
+                else "\n"
             )
+            prompt = f"{example.task_prompt}\n{instruction}{context_section}"
+            system_prompt = _system_prompt_for(example)
             cache_key = make_cache_key(
                 "paper_candidate_generation",
                 {
@@ -214,6 +290,7 @@ def build_paper_candidate_pool(
                     "provider": spec.provider,
                     "temperature": temperature,
                     "prompt": prompt,
+                    "system_prompt": system_prompt,
                 },
             )
             cached = generation_cache.get(cache_key)
@@ -221,10 +298,7 @@ def build_paper_candidate_pool(
                 try:
                     response = router.generate(
                         spec=spec,
-                        system_prompt=(
-                            "You are an expert clinical documentation assistant. "
-                            "Produce only the clinical note."
-                        ),
+                        system_prompt=system_prompt,
                         user_prompt=prompt,
                         temperature=temperature,
                     )
@@ -272,8 +346,11 @@ def build_candidate_pool(
     needed_generated = max(0, config.target_candidate_count - len(candidates) - reserved_weak_slots)
 
     if not config.dry_run and router is not None:
-        for spec, style_name, temperature, index in _generation_plan(config.writer_models, needed_generated):
+        for spec, style_name, temperature, index in _generation_plan(
+            config.writer_models, needed_generated, example=example
+        ):
             prompt = _candidate_prompt(example, style_name)
+            system_prompt = _system_prompt_for(example)
             cache_key = make_cache_key(
                 "candidate_generation",
                 {
@@ -283,6 +360,7 @@ def build_candidate_pool(
                     "style": style_name,
                     "temperature": temperature,
                     "prompt": prompt,
+                    "system_prompt": system_prompt,
                 },
             )
             cached = generation_cache.get(cache_key)
@@ -290,10 +368,7 @@ def build_candidate_pool(
                 try:
                     response = router.generate(
                         spec=spec,
-                        system_prompt=(
-                            "You are an expert clinical documentation assistant. "
-                            "Produce only the clinical note."
-                        ),
+                        system_prompt=system_prompt,
                         user_prompt=prompt,
                         temperature=temperature,
                     )

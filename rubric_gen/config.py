@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -27,6 +27,50 @@ DEFAULT_DECOMPOSITION_MIN_RECALL = 0.85
 DEFAULT_DECOMPOSITION_MAX_EXTRA_RATIO = 0.15
 DEFAULT_DECOMPOSITION_MIN_DISCRIMINATION_GAIN = 0.03
 DEFAULT_DECOMPOSITION_MAX_PAIR_OVERLAP = 0.75
+
+
+# Default 3000/2000 split aligns with the medical_rl_prompts team workflow.
+DEFAULT_TRAIN_SIZE = 3000
+DEFAULT_VAL_SIZE = 2000
+DEFAULT_NUM_SHARDS = 3
+DEFAULT_SHARD_INDEX = 0
+ALLOWED_SPLITS = ("all", "train", "val")
+
+
+# Presets that pin a complete configuration in one flag.
+#
+# `judgebench-v47-medical` locks in the rubric-judge core that JudgeBench v4.7
+# (`jb_350_blind_v47_agreement_aware`, 80.57 % single-order on val_350) was
+# built on, applied to single-response medical Q&A:
+#   * GPT-4o for both rubric proposal and rubric-satisfaction judging, since
+#     v4.7 keeps GPT-4o as the base judge for every rubric / discriminator
+#     call.
+#   * Multi-model writers (GPT-4o-mini + Claude Sonnet 4.x when keys are
+#     available) so candidate diversity matches the multi-model RRD proposer
+#     setup from v2.
+#   * Default split / shard knobs sized for the 5,000-row medical_rl_prompts
+#     workflow (3,000 train / 2,000 val / 3 shards of 1,000 rows each).
+#
+# The JudgeBench-specific HP-override verifiers (mmlu_independent_answerer,
+# math_independent_solver, reasoning_independent_solver, code_execution
+# verifier, leetcode_test_runner) are *not* part of this preset because they
+# only fire on JudgeBench source families (mmlu-pro, livebench-{math,
+# reasoning}, livecodebench) and have nothing to verify on medical Q&A.
+PRESET_JUDGEBENCH_V47_MEDICAL = "judgebench-v47-medical"
+ALLOWED_PRESETS = (PRESET_JUDGEBENCH_V47_MEDICAL,)
+
+
+_V47_RUBRIC_MODEL = "openai:gpt-4o"
+_V47_JUDGE_MODEL = "openai:gpt-4o"
+_V47_WRITER_MODELS_BY_PROVIDER = {
+    "openai": "openai:gpt-4o-mini",
+    "anthropic": "anthropic:claude-sonnet-4-5-20250929",
+}
+# medical_rl_prompts ships its existing answer in the `response` column and we
+# treat it as the gold answer (rank-1 target for `reference_top1_rate`). The
+# preset promotes `response` into the reference slot so the loader does not
+# also build a duplicate `augmented_note` anchor with the same text.
+_V47_REFERENCE_FIELDS: List[str] = ["response"]
 
 
 @dataclass
@@ -67,6 +111,13 @@ class PipelineConfig:
     dry_run: bool = False
     max_workers: int = DEFAULT_MAX_WORKERS
     target_candidate_count: int = DEFAULT_TARGET_CANDIDATES
+    split: str = "all"
+    train_size: int = 0
+    val_size: int = 0
+    num_shards: int = 1
+    shard_index: int = 0
+    preset: Optional[str] = None
+    reference_fields: List[str] = field(default_factory=list)
     paper_include_reference_eval_anchor: bool = False
     paper_prompt_only_baseline: bool = True
     paper_response_only_judging: bool = False
@@ -357,6 +408,67 @@ def discover_default_downstream_note_judge_model() -> Optional[ModelSpec]:
     return None
 
 
+def _apply_preset_defaults(
+    preset: Optional[str],
+    *,
+    rubric_model: Optional[str],
+    judge_model: Optional[str],
+    writer_models: Optional[List[str]],
+    split: Optional[str],
+    train_size: Optional[int],
+    val_size: Optional[int],
+    num_shards: Optional[int],
+    reference_fields: Optional[List[str]],
+) -> Dict[str, Any]:
+    """Resolve preset defaults that user-supplied flags can still override.
+
+    Returns a dict of effective values for the keys that presets care about.
+    Each value is the user override when present, otherwise the preset value,
+    otherwise the original default that `build_config` was already going to use.
+    """
+    if preset is not None and preset not in ALLOWED_PRESETS:
+        raise ValueError(
+            f"Unknown preset '{preset}'. Allowed: {', '.join(ALLOWED_PRESETS)}."
+        )
+
+    effective: Dict[str, Any] = {
+        "rubric_model": rubric_model,
+        "judge_model": judge_model,
+        "writer_models": writer_models,
+        "split": split,
+        "train_size": train_size,
+        "val_size": val_size,
+        "num_shards": num_shards,
+        "reference_fields": reference_fields,
+    }
+
+    if preset == PRESET_JUDGEBENCH_V47_MEDICAL:
+        if effective["rubric_model"] is None:
+            effective["rubric_model"] = _V47_RUBRIC_MODEL
+        if effective["judge_model"] is None:
+            effective["judge_model"] = _V47_JUDGE_MODEL
+        if not effective["writer_models"]:
+            preset_writers: List[str] = []
+            if os.getenv("OPENAI_API_KEY"):
+                preset_writers.append(_V47_WRITER_MODELS_BY_PROVIDER["openai"])
+            if os.getenv("ANTHROPIC_API_KEY"):
+                preset_writers.append(_V47_WRITER_MODELS_BY_PROVIDER["anthropic"])
+            if preset_writers:
+                effective["writer_models"] = preset_writers
+        if effective["split"] is None:
+            effective["split"] = "train"
+        if effective["train_size"] is None:
+            effective["train_size"] = DEFAULT_TRAIN_SIZE
+        if effective["val_size"] is None:
+            effective["val_size"] = DEFAULT_VAL_SIZE
+        if effective["num_shards"] is None:
+            effective["num_shards"] = DEFAULT_NUM_SHARDS
+        if not effective["reference_fields"]:
+            effective["reference_fields"] = list(_V47_REFERENCE_FIELDS)
+
+    return effective
+
+
 def build_config(
     dataset_path: Optional[str],
     output_dir: Optional[str],
@@ -385,7 +497,52 @@ def build_config(
     downstream_judge_model: Optional[str] = None,
     paper_pairwise_label_mode: Optional[str] = None,
     paper_pairwise_judge_model: Optional[str] = None,
+    split: Optional[str] = None,
+    train_size: Optional[int] = None,
+    val_size: Optional[int] = None,
+    num_shards: Optional[int] = None,
+    shard_index: int = 0,
+    preset: Optional[str] = None,
+    reference_fields: Optional[List[str]] = None,
 ) -> PipelineConfig:
+    preset_resolved = _apply_preset_defaults(
+        preset,
+        rubric_model=rubric_model,
+        judge_model=judge_model,
+        writer_models=writer_models,
+        split=split,
+        train_size=train_size,
+        val_size=val_size,
+        num_shards=num_shards,
+        reference_fields=reference_fields,
+    )
+    rubric_model = preset_resolved["rubric_model"]
+    judge_model = preset_resolved["judge_model"]
+    writer_models = preset_resolved["writer_models"]
+    effective_split = preset_resolved["split"] if preset_resolved["split"] is not None else "all"
+    effective_train_size = preset_resolved["train_size"] if preset_resolved["train_size"] is not None else 0
+    effective_val_size = preset_resolved["val_size"] if preset_resolved["val_size"] is not None else 0
+    effective_num_shards = preset_resolved["num_shards"] if preset_resolved["num_shards"] is not None else 1
+    effective_reference_fields = list(preset_resolved["reference_fields"] or [])
+
+    if effective_split not in ALLOWED_SPLITS:
+        raise ValueError(
+            f"--split must be one of {', '.join(ALLOWED_SPLITS)}; got '{effective_split}'."
+        )
+    if effective_num_shards < 1:
+        raise ValueError("--num-shards must be >= 1.")
+    if shard_index < 0 or shard_index >= effective_num_shards:
+        raise ValueError(
+            f"--shard-index must be in [0, {effective_num_shards}); got {shard_index}."
+        )
+    if effective_split == "train" and effective_train_size > 0 and effective_num_shards > 1:
+        if effective_train_size % effective_num_shards != 0:
+            raise ValueError(
+                f"--train-size ({effective_train_size}) is not evenly divisible by "
+                f"--num-shards ({effective_num_shards}). Pick a divisible value to "
+                "guarantee identical shard sizes across team members."
+            )
+
     configured_writer_models = (
         [parse_model_spec(spec, alias_prefix="writer", index=i) for i, spec in enumerate(writer_models or [])]
         if writer_models
@@ -484,6 +641,13 @@ def build_config(
         dry_run=dry_run,
         max_workers=max(1, max_workers),
         target_candidate_count=target_candidate_count or DEFAULT_TARGET_CANDIDATES,
+        split=effective_split,
+        train_size=effective_train_size,
+        val_size=effective_val_size,
+        num_shards=effective_num_shards,
+        shard_index=shard_index,
+        preset=preset,
+        reference_fields=effective_reference_fields,
         writer_models=configured_writer_models,
         paper_pairwise_label_mode=effective_paper_pairwise_label_mode,
         paper_response_only_judging=paper_mode,

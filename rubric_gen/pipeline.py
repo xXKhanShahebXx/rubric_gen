@@ -206,10 +206,35 @@ class RubricPipeline:
             start=self.config.start,
             limit=self.config.limit,
             source_filter=self.config.source_filter,
+            split=self.config.split,
+            train_size=self.config.train_size,
+            val_size=self.config.val_size,
+            num_shards=self.config.num_shards,
+            shard_index=self.config.shard_index,
+            reference_field_overrides=self.config.reference_fields,
         )
         write_json(
             self.layout.run_dir / "normalized_examples.json",
             {"examples": [asdict(example) for example in examples]},
+        )
+        write_json(
+            self.layout.run_dir / "split_manifest.json",
+            {
+                "dataset_path": str(self.config.dataset_path),
+                "preset": self.config.preset,
+                "split": self.config.split,
+                "train_size": self.config.train_size,
+                "val_size": self.config.val_size,
+                "num_shards": self.config.num_shards,
+                "shard_index": self.config.shard_index,
+                "start_offset_within_shard": self.config.start,
+                "limit_within_shard": self.config.limit,
+                "source_filter": self.config.source_filter,
+                "reference_fields": list(self.config.reference_fields or []),
+                "loaded_example_count": len(examples),
+                "first_source_id": examples[0].source_id if examples else None,
+                "last_source_id": examples[-1].source_id if examples else None,
+            },
         )
 
         example_artifacts: List[Dict[str, object]] = []

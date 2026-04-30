@@ -168,6 +168,12 @@ class PaperModePipeline:
             start=self.config.start,
             limit=self.config.limit,
             source_filter=self.config.source_filter,
+            split=self.config.split,
+            train_size=self.config.train_size,
+            val_size=self.config.val_size,
+            num_shards=self.config.num_shards,
+            shard_index=self.config.shard_index,
+            reference_field_overrides=self.config.reference_fields,
         )
         write_json(
             self.layout.run_dir / "normalized_examples.json",
