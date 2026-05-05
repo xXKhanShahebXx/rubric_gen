@@ -54,6 +54,27 @@ QA_STYLE_INSTRUCTIONS: Dict[str, str] = {
     ),
 }
 
+
+# Tier A3 (v2): boundary candidates feed RRD two extra deliberately-weak
+# responses per example so the proposer is forced to produce rubrics that
+# discriminate verbosity from correctness.  Diagnostic Angle H showed shard 0's
+# library was -5.7 pp generated-favoured (rubrics over-reward LLM-thorough
+# outputs), which is the upstream cause of the 4k FM2 'B-overshoot'.  These
+# two candidates also feed the misalignment filter (currently only 0.7% of
+# rejections), giving it real `synthetically_degraded` material to work with.
+BOUNDARY_CANDIDATE_STYLES: Dict[str, str] = {
+    "terse": (
+        "Answer in one or two sentences only. No headers, no caveats, no "
+        "extended reasoning. Be direct and minimal."
+    ),
+    "padded_uncommitted": (
+        "Write a long, multi-paragraph response that covers background, "
+        "context, mechanisms, and tangentially related considerations. "
+        "Hedge throughout. Do NOT commit to a single clear answer or "
+        "recommendation; stay exploratory and equivocal from start to finish."
+    ),
+}
+
 # Backwards-compatible alias preserved for any external code that imported the
 # old name. Defaults to the note styles, which is the original behaviour.
 STYLE_INSTRUCTIONS: Dict[str, str] = NOTE_STYLE_INSTRUCTIONS
@@ -110,6 +131,39 @@ def _quality_bucket_for_model(spec: ModelSpec) -> str:
 
 def _anchor_candidates(example: ExampleRecord) -> List[CandidateNote]:
     anchors: List[CandidateNote] = []
+
+    # Pair-preference shape: when the row carries TWO labelled candidate
+    # responses (e.g. medical_gpt41_answers_rl with reference_answer_a /
+    # reference_answer_b / correct_answer), build the pair anchors and skip
+    # the legacy gold/augmented anchors. The pair anchors share the same
+    # quality_bucket because we don't know which of A/B is "strong" until
+    # after scoring -- the report's pair_preference metric uses the ranking
+    # to compare them head-to-head against the label.
+    if example.has_pair_candidates:
+        anchors.append(
+            CandidateNote(
+                candidate_id=f"{example.example_id}__pair_a",
+                example_id=example.example_id,
+                text=example.pair_response_a,
+                source_label="pair_response_a",
+                quality_bucket="pair_anchor",
+                origin_kind="pair_anchor",
+                metadata={"pair_correct_label": example.pair_correct_label},
+            )
+        )
+        anchors.append(
+            CandidateNote(
+                candidate_id=f"{example.example_id}__pair_b",
+                example_id=example.example_id,
+                text=example.pair_response_b,
+                source_label="pair_response_b",
+                quality_bucket="pair_anchor",
+                origin_kind="pair_anchor",
+                metadata={"pair_correct_label": example.pair_correct_label},
+            )
+        )
+        return anchors
+
     if example.reference_note:
         anchors.append(
             CandidateNote(
@@ -239,6 +293,91 @@ def _synthetic_degradations(example: ExampleRecord, count: int) -> List[Candidat
             )
         )
     return candidates
+
+
+def _boundary_candidates(
+    example: ExampleRecord,
+    config: PipelineConfig,
+    router: Optional[LLMRouter],
+    generation_cache: JsonlCache,
+) -> List[CandidateNote]:
+    """Produce two LLM-backed boundary candidates per example (Tier A3 v2).
+
+    Generates a deliberately terse and a deliberately padded-but-uncommitted
+    response using the first available writer.  Both are tagged
+    ``synthetically_degraded`` so they slot into the same reservation slots
+    the original ``_synthetic_degradations`` pipeline used to fill, and so
+    they trigger RRD's misalignment acceptance check.
+
+    Soft-fails on missing router / writer / API errors -- the caller falls
+    back to ``_synthetic_degradations`` for any unfilled slots.
+    """
+    if config.dry_run or router is None or not config.writer_models:
+        return []
+
+    writer = config.writer_models[0]
+    system_prompt = _system_prompt_for(example)
+    base_user = example.task_prompt
+    if example.conversation.strip():
+        base_user = (
+            base_user
+            + "\n\n"
+            + _context_label_for(example)
+            + ":\n"
+            + example.conversation
+        )
+
+    out: List[CandidateNote] = []
+    for style_name, style_instruction in BOUNDARY_CANDIDATE_STYLES.items():
+        prompt = base_user + "\n\nStyle instruction: " + style_instruction + "\n"
+        cache_key = make_cache_key(
+            "boundary_candidate",
+            {
+                "example_id": example.example_id,
+                "model": writer.model,
+                "provider": writer.provider,
+                "style": style_name,
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+            },
+        )
+        cached = generation_cache.get(cache_key)
+        if cached is None:
+            try:
+                response = router.generate(
+                    spec=writer,
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                    temperature=0.0,
+                )
+            except Exception:
+                continue
+            cached = generation_cache.set(
+                cache_key,
+                {
+                    "candidate": {
+                        "candidate_id": f"{example.example_id}__boundary_{style_name}",
+                        "example_id": example.example_id,
+                        "text": response.text,
+                        "source_label": f"boundary_{style_name}",
+                        "quality_bucket": "synthetically_degraded",
+                        "origin_kind": "synthetic",
+                        "model_alias": writer.alias,
+                        "provider": writer.provider,
+                        "prompt_style": f"boundary_{style_name}",
+                        "temperature": 0.0,
+                        "parent_candidate_id": None,
+                        "metadata": {
+                            "model": writer.model,
+                            "boundary_kind": style_name,
+                            "latency_s": response.latency_s,
+                        },
+                    }
+                },
+            )
+        out.append(CandidateNote(**cached["candidate"]))
+
+    return out
 
 
 def _dedupe_candidates(candidates: List[CandidateNote]) -> List[CandidateNote]:
@@ -400,6 +539,18 @@ def build_candidate_pool(
             candidates.append(CandidateNote(**candidate_payload))
 
     candidates = _dedupe_candidates(candidates)
+
+    # v2 Tier A3: inject LLM-backed boundary candidates (terse + padded-
+    # uncommitted) before falling through to ``_synthetic_degradations``.
+    # The boundary candidates fill the 2 reserved-weak slots on Q&A rows
+    # where ``_synthetic_degradations`` typically returns empty
+    # (mean 0.79 synthetic per example in shard 0 v1).  Skipped silently
+    # under ``dry_run`` or when no writer is available.
+    boundary = _boundary_candidates(example, config, router, generation_cache)
+    if boundary:
+        candidates.extend(boundary)
+        candidates = _dedupe_candidates(candidates)
+
     remaining = max(0, config.target_candidate_count - len(candidates))
     if remaining > 0:
         candidates.extend(_synthetic_degradations(example, remaining))

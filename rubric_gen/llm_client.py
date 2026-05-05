@@ -13,6 +13,22 @@ JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 TAG_VALUE_RE = re.compile(r"<(?P<tag>[A-Z_]+)>\s*(?P<value>.*?)\s*</(?P=tag)>", re.DOTALL)
 
 
+# Anthropic model patterns where the `temperature` parameter is deprecated /
+# rejected. Currently this covers the Opus 4.7+ thinking models. Extend this
+# list when newer thinking-only Anthropic models ship.
+_ANTHROPIC_NO_TEMPERATURE_PATTERNS = (
+    "opus-4-7",
+    "opus-4-8",
+    "opus-4-9",
+    "opus-5",
+)
+
+
+def _anthropic_rejects_temperature(model: str) -> bool:
+    lowered = (model or "").lower()
+    return any(token in lowered for token in _ANTHROPIC_NO_TEMPERATURE_PATTERNS)
+
+
 def strip_code_fences(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -155,13 +171,21 @@ class LLMRouter:
                         )
                         text = response.choices[0].message.content or ""
                 else:
-                    response = client.messages.create(
-                        model=spec.model,
-                        system=system_prompt,
-                        temperature=temperature,
-                        max_tokens=effective_max_tokens,
-                        messages=[{"role": "user", "content": user_prompt}],
-                    )
+                    # Anthropic. Newer Opus thinking models (4.7+) reject the
+                    # `temperature` parameter outright: passing it raises
+                    # ``invalid_request_error: temperature is deprecated for
+                    # this model``. Detect those by name pattern and omit the
+                    # kwarg; pass it through normally for older Anthropic
+                    # models that still accept it.
+                    anthropic_kwargs: Dict[str, Any] = {
+                        "model": spec.model,
+                        "system": system_prompt,
+                        "max_tokens": effective_max_tokens,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                    }
+                    if not _anthropic_rejects_temperature(spec.model):
+                        anthropic_kwargs["temperature"] = temperature
+                    response = client.messages.create(**anthropic_kwargs)
                     text = "".join(
                         block.text
                         for block in response.content

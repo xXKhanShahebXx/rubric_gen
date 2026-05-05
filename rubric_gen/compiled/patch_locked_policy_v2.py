@@ -63,6 +63,28 @@ def _build_parser() -> argparse.ArgumentParser:
         "Use 'livecodebench=0' to disable library on code, etc.",
     )
     parser.add_argument("--family-strict-library-mode", action="store_true")
+    parser.add_argument(
+        "--library-relevance-filter",
+        action="store_true",
+        help="Enable a Sonnet-based relevance filter on retrieved library criteria. The "
+        "filter drops criteria judged HIGH-confidence-irrelevant to the pair's prompt "
+        "and responses (e.g. cardiology criterion retrieved for an endocrine prompt).",
+    )
+    parser.add_argument(
+        "--library-relevance-filter-strictness",
+        type=str,
+        default="conservative",
+        choices=["conservative", "aggressive"],
+        help="conservative: drop only IRRELEVANT verdicts (UNCERTAIN survives). "
+        "aggressive: keep only APPLICABLE verdicts.",
+    )
+    parser.add_argument(
+        "--library-relevance-filter-model",
+        type=str,
+        default="",
+        help="Optional provider:model for the relevance filter (e.g. anthropic:claude-sonnet-4-5-20250929). "
+        "Empty -> default Sonnet 4.5.",
+    )
     parser.add_argument("--math-independent-solver", action="store_true")
     parser.add_argument("--math-solver-samples", type=int, default=1)
     parser.add_argument("--math-solver-temperature", type=float, default=0.5)
@@ -146,6 +168,15 @@ def _patch_policy(policy_path: Path, args: argparse.Namespace) -> dict:
         list(getattr(args, "library_retrieval_family_top_k", []) or [])
     )
     payload["family_strict_library_mode"] = bool(getattr(args, "family_strict_library_mode", False))
+    payload["library_relevance_filter_enabled"] = bool(
+        getattr(args, "library_relevance_filter", False)
+    )
+    payload["library_relevance_filter_strictness"] = str(
+        getattr(args, "library_relevance_filter_strictness", "conservative") or "conservative"
+    ).strip().lower()
+    payload["library_relevance_filter_model"] = str(
+        getattr(args, "library_relevance_filter_model", "") or ""
+    ).strip()
     payload["math_independent_solver_enabled"] = bool(getattr(args, "math_independent_solver", False))
     payload["math_solver_samples"] = max(1, min(9, int(getattr(args, "math_solver_samples", 1) or 1)))
     payload["math_solver_temperature"] = max(

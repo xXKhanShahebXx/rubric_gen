@@ -124,6 +124,60 @@ def build_parser() -> argparse.ArgumentParser:
             "judgebench-v47-medical preset sets this to 'response' by default."
         ),
     )
+    parser.add_argument(
+        "--medical-rubric-index",
+        dest="medical_rubric_index_path",
+        default=None,
+        help=(
+            "Path to a medical RRD-rubric embedding index built by "
+            "scripts/build_medical_rubric_index.py. When set AND --split val, the "
+            "pipeline embeds each validation prompt, retrieves the top-K nearest "
+            "training rubrics, runs the relevance filter (unless "
+            "--no-relevance-filter is set), and seeds RRD discovery with the "
+            "survivors. Has no effect outside validation."
+        ),
+    )
+    parser.add_argument(
+        "--medical-rubric-retrieval-top-k",
+        type=int,
+        default=None,
+        help=(
+            "Number of nearest training rubrics to retrieve per validation example "
+            "before applying the relevance filter (default: 8). Set to 0 to disable "
+            "retrieval even when --medical-rubric-index is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-relevance-filter",
+        dest="medical_rubric_filter_enabled",
+        action="store_false",
+        default=None,
+        help=(
+            "Disable the Sonnet 4.5 relevance filter on retrieved rubrics. By "
+            "default the filter is on whenever --medical-rubric-index is set. Use "
+            "this when you want to compare retrieval-only vs retrieval+filter."
+        ),
+    )
+    parser.add_argument(
+        "--relevance-filter-strictness",
+        dest="medical_rubric_filter_strictness",
+        choices=["conservative", "aggressive"],
+        default=None,
+        help=(
+            "How strictly the relevance filter prunes. 'conservative' (default) "
+            "drops only IRRELEVANT verdicts and keeps UNCERTAIN. 'aggressive' "
+            "keeps only APPLICABLE."
+        ),
+    )
+    parser.add_argument(
+        "--relevance-filter-model",
+        dest="medical_rubric_filter_model",
+        default=None,
+        help=(
+            "Optional provider:model override for the relevance filter (e.g. "
+            "anthropic:claude-opus-4-7). Defaults to anthropic:claude-sonnet-4-5-20250929."
+        ),
+    )
     parser.add_argument("--resume", action="store_true", help="Skip examples that already have per-example artifacts.")
     parser.add_argument("--dry-run", action="store_true", help="Run with heuristic fallbacks and no provider calls.")
     parser.add_argument("--max-workers", type=int, default=4, help="Maximum concurrent rubric-evaluation workers (parallelism within one example).")
@@ -145,6 +199,55 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-initial-rubrics", type=int, default=None, help="Override the initial rubric cap.")
     parser.add_argument("--max-final-rubrics", type=int, default=None, help="Override the final RRD rubric cap.")
     parser.add_argument("--max-decomposition-depth", type=int, default=None, help="Override the maximum RRD decomposition depth.")
+    # v2 Tier A6: surface the new RRD tunables introduced in A4 + A5.
+    parser.add_argument(
+        "--rubric-satisfaction-samples",
+        type=int,
+        default=None,
+        help=(
+            "Number of LLM samples per rubric-satisfaction call (majority vote). "
+            "Default 1 preserves single-sample behaviour and cache hits. "
+            "Set to 3 to attack the score-tie regime by adding signal."
+        ),
+    )
+    parser.add_argument(
+        "--rubric-satisfaction-temperature",
+        type=float,
+        default=None,
+        help=(
+            "Temperature used for samples 1..N-1 when --rubric-satisfaction-samples > 1. "
+            "Sample 0 always uses temperature 0.0 (so its cache key matches the legacy single-sample key)."
+        ),
+    )
+    parser.add_argument(
+        "--discrimination-min-pq",
+        type=float,
+        default=None,
+        help=(
+            "Drop rubrics with min(p, 1-p) below this threshold from the scoring weights/rankings "
+            "(post-RRD discrimination filter). Default 0.0 keeps all rubrics. "
+            "Recommended 0.05 to drop the ~12 pct 'useless' rubrics found by shard 0 v2 angle D."
+        ),
+    )
+    parser.add_argument(
+        "--decomposition-min-recall",
+        type=float,
+        default=None,
+        help=(
+            "Override the decomposition acceptance min_recall (default 0.85). "
+            "Lower values (e.g. 0.70) accept more decompositions, increasing depth>0 rubric count."
+        ),
+    )
+    parser.add_argument(
+        "--decomposition-min-discrimination-gain",
+        type=float,
+        default=None,
+        help=(
+            "Override the decomposition min_discrimination_gain (default 0.03). "
+            "Lower values (e.g. 0.01) accept more decompositions whose children only modestly "
+            "improve discrimination over the parent."
+        ),
+    )
     parser.add_argument(
         "--writer-model",
         dest="writer_models",
@@ -235,6 +338,16 @@ def main(argv: list[str] | None = None) -> int:
         shard_index=args.shard_index,
         preset=args.preset,
         reference_fields=args.reference_fields,
+        medical_rubric_index_path=args.medical_rubric_index_path,
+        medical_rubric_retrieval_top_k=args.medical_rubric_retrieval_top_k,
+        medical_rubric_filter_enabled=args.medical_rubric_filter_enabled,
+        medical_rubric_filter_strictness=args.medical_rubric_filter_strictness,
+        medical_rubric_filter_model=args.medical_rubric_filter_model,
+        rubric_satisfaction_samples=args.rubric_satisfaction_samples,
+        rubric_satisfaction_temperature=args.rubric_satisfaction_temperature,
+        discrimination_min_pq=args.discrimination_min_pq,
+        decomposition_min_recall=args.decomposition_min_recall,
+        decomposition_min_discrimination_gain=args.decomposition_min_discrimination_gain,
     )
     if config.paper_mode:
         from rubric_gen.paper_pipeline import PaperModePipeline

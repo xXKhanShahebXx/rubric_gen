@@ -12,6 +12,7 @@ from rubric_gen.rrd.prompts import (
     DECOMPOSITION_SYSTEM,
     INITIAL_RUBRIC_SYSTEM,
     INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY,
+    select_initial_rubric_system,
     OVERLAP_SYSTEM,
     SATISFACTION_SYSTEM,
     SATISFACTION_SYSTEM_RESPONSE_ONLY,
@@ -281,12 +282,24 @@ class RRDEngine:
             if include_responses
             else render_initial_rubric_prompt_without_responses(example, self.config.max_initial_rubrics)
         )
+        # Task-type-aware system prompt -- v2 fix for the "the note correctly
+        # identifies ..." template overcrowding (top-50 4-token prefixes
+        # covered 72.2% of all shard-0 rubrics).  See ``select_initial_rubric_system``
+        # in ``rubric_gen/rrd/prompts.py`` for the dispatch table.
+        system_prompt = select_initial_rubric_system(example, include_responses=include_responses)
         cache_key = make_cache_key(
             "initial_rubrics" if include_responses else "initial_rubrics_prompt_only",
             {
                 "example_id": example.example_id,
                 "prompt": prompt,
                 "model": self.config.rubric_proposer.model,
+                # Bust the cache when the prompt scheme changes so retraining
+                # actually produces fresh rubrics under the new instructions.
+                # v2.1 broadens the banned-opening list to cover the
+                # "the answer correctly identifies" template variant the v2
+                # smoke produced 21.6% of the time when the QA framing was
+                # introduced.
+                "prompt_scheme": "v2_1_task_typed_broad_ban",
             },
         )
         cached = self.proposal_cache.get(cache_key)
@@ -294,7 +307,7 @@ class RRDEngine:
             try:
                 response = self.router.generate(
                     self.config.rubric_proposer,
-                    system_prompt=INITIAL_RUBRIC_SYSTEM if include_responses else INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY,
+                    system_prompt=system_prompt,
                     user_prompt=prompt,
                 )
                 cached = self.proposal_cache.set(
@@ -408,15 +421,122 @@ class RRDEngine:
         candidate: CandidateNote,
         rubric: RubricCriterion,
     ) -> RubricEvaluation:
-        cache_key = make_cache_key(
-            "rubric_satisfaction",
+        # v2 Tier A4: multi-sample majority-vote satisfaction.
+        # ``rubric_satisfaction_samples=1`` (default) preserves the legacy
+        # single-call path AND its cache key, so existing caches still hit.
+        # When samples > 1, sample 0 always uses temp 0.0 (so its cache key
+        # is *also* the legacy key, sharing the cache), and samples 1..N-1
+        # use ``rubric_satisfaction_temperature`` with per-sample cache keys.
+        # Final verdict is ``yes_votes > no_votes`` (ties => NO, mirroring
+        # ``compiled/judgebench_eval.py:evaluate_rubric_satisfaction``).
+        samples_n = max(1, int(getattr(self.config, "rubric_satisfaction_samples", 1) or 1))
+        temperature = float(getattr(self.config, "rubric_satisfaction_temperature", 0.4) or 0.4)
+
+        if samples_n == 1:
+            return self._evaluate_satisfaction_single_sample(
+                example=example,
+                candidate=candidate,
+                rubric=rubric,
+                sample_index=0,
+                sample_temperature=0.0,
+            )
+
+        agg_cache_key = make_cache_key(
+            "rubric_satisfaction_aggregated",
             {
                 "example_id": example.example_id,
                 "candidate_id": candidate.candidate_id,
                 "rubric": rubric.text,
                 "model": self.config.rubric_judge.model if self.config.rubric_judge else "heuristic",
+                "samples": samples_n,
+                "temperature": temperature,
             },
         )
+        cached_agg = self.satisfaction_cache.get(agg_cache_key)
+        if cached_agg is not None:
+            return RubricEvaluation(**cached_agg["evaluation"])
+
+        yes_votes = 0
+        no_votes = 0
+        sample_history: List[Dict[str, object]] = []
+        last_evaluation: Optional[RubricEvaluation] = None
+        for idx in range(samples_n):
+            sample_temp = 0.0 if idx == 0 else max(0.1, temperature)
+            sample_evaluation = self._evaluate_satisfaction_single_sample(
+                example=example,
+                candidate=candidate,
+                rubric=rubric,
+                sample_index=idx,
+                sample_temperature=sample_temp,
+            )
+            last_evaluation = sample_evaluation
+            sample_history.append(
+                {
+                    "sample_index": idx,
+                    "temperature": sample_temp,
+                    "satisfied": bool(sample_evaluation.satisfied),
+                }
+            )
+            if sample_evaluation.satisfied:
+                yes_votes += 1
+            else:
+                no_votes += 1
+
+        final_satisfied = yes_votes > no_votes
+        aggregated = RubricEvaluation(
+            rubric_id=rubric.rubric_id,
+            candidate_id=candidate.candidate_id,
+            satisfied=final_satisfied,
+            reasoning=(last_evaluation.reasoning if last_evaluation else ""),
+            raw_response=(last_evaluation.raw_response if last_evaluation else ""),
+            metadata={
+                "samples": samples_n,
+                "yes_votes": yes_votes,
+                "no_votes": no_votes,
+                "sample_history": sample_history,
+                "satisfaction_temperature": temperature,
+            },
+        )
+        self.satisfaction_cache.set(agg_cache_key, {"evaluation": asdict(aggregated)})
+        return aggregated
+
+    def _evaluate_satisfaction_single_sample(
+        self,
+        example: ExampleRecord,
+        candidate: CandidateNote,
+        rubric: RubricCriterion,
+        sample_index: int,
+        sample_temperature: float,
+    ) -> RubricEvaluation:
+        """Generate (with cache) a single rubric-satisfaction call.
+
+        Sample 0 (temp 0.0) reuses the legacy cache key so existing single-
+        sample caches survive an upgrade to ``samples > 1``.  Other samples
+        use a key that includes ``sample_index`` and ``sample_temperature``
+        so each per-sample call caches separately.
+        """
+        if sample_index == 0:
+            cache_key = make_cache_key(
+                "rubric_satisfaction",
+                {
+                    "example_id": example.example_id,
+                    "candidate_id": candidate.candidate_id,
+                    "rubric": rubric.text,
+                    "model": self.config.rubric_judge.model if self.config.rubric_judge else "heuristic",
+                },
+            )
+        else:
+            cache_key = make_cache_key(
+                "rubric_satisfaction",
+                {
+                    "example_id": example.example_id,
+                    "candidate_id": candidate.candidate_id,
+                    "rubric": rubric.text,
+                    "model": self.config.rubric_judge.model if self.config.rubric_judge else "heuristic",
+                    "sample_index": sample_index,
+                    "sample_temperature": sample_temperature,
+                },
+            )
         cached = self.satisfaction_cache.get(cache_key)
         if cached is not None:
             return RubricEvaluation(**cached["evaluation"])
@@ -444,6 +564,7 @@ class RRDEngine:
                         if self.config.paper_response_only_judging
                         else render_satisfaction_prompt(example, candidate, rubric.text)
                     ),
+                    temperature=sample_temperature,
                 )
                 verdict, reasoning = parse_yes_no(response.text)
                 evaluation = RubricEvaluation(
@@ -584,25 +705,37 @@ class RRDEngine:
         rubric_list = list(rubrics)
         scoring_candidates = list(evaluation_candidates or candidates)
         evaluations = self.evaluate_rubric_set(example, scoring_candidates, rubric_list)
-        uniform_weights = compute_uniform_weights(rubric_list)
+
+        # v2 Tier A5: post-RRD discrimination filter.
+        # Drop rubrics with min(p, 1-p) < discrimination_min_pq from the
+        # scoring weights/rankings.  The full ``rubrics`` and ``evaluations``
+        # arrays are still emitted (downstream tools and the bank-judgment
+        # path want the complete set), but the weighting+ranking only see
+        # the discriminative subset.  Default threshold 0.0 = no-op.
+        scoring_rubrics, scoring_evaluations, discrimination_debug = self._apply_discrimination_filter(
+            rubric_list, evaluations, len(scoring_candidates)
+        )
+
+        uniform_weights = compute_uniform_weights(scoring_rubrics)
         wu_weights, wu_debug = compute_whitened_uniform_weights(
-            rubric_list,
+            scoring_rubrics,
             scoring_candidates,
-            evaluations,
+            scoring_evaluations,
             ridge=self.config.covariance_ridge,
         )
         return {
             "rubrics": [asdict(rubric) for rubric in rubric_list],
             "evaluations": [asdict(evaluation) for evaluation in evaluations],
+            "discrimination_filter": discrimination_debug,
             "uniform": {
                 "weights": uniform_weights,
                 "ranking": [
                     asdict(score)
                     for score in score_candidates(
                         f"{method_prefix}_uniform",
-                        rubric_list,
+                        scoring_rubrics,
                         scoring_candidates,
-                        evaluations,
+                        scoring_evaluations,
                         uniform_weights,
                     )
                 ],
@@ -614,14 +747,83 @@ class RRDEngine:
                     asdict(score)
                     for score in score_candidates(
                         f"{method_prefix}_whitened_uniform",
-                        rubric_list,
+                        scoring_rubrics,
                         scoring_candidates,
-                        evaluations,
+                        scoring_evaluations,
                         wu_weights,
                     )
                 ],
             },
         }
+
+    def _apply_discrimination_filter(
+        self,
+        rubric_list: List[RubricCriterion],
+        evaluations: List[RubricEvaluation],
+        candidate_count: int,
+    ) -> Tuple[List[RubricCriterion], List[RubricEvaluation], Dict[str, object]]:
+        """Filter rubrics with low Bernoulli discrimination from the scoring set.
+
+        Computes ``p = yes_votes / total_evals`` per rubric and drops any
+        rubric with ``min(p, 1-p) < discrimination_min_pq``.  The filter is a
+        no-op when the threshold is 0 (default), the candidate pool is too
+        small to estimate p reliably, or when filtering would leave zero
+        rubrics (in which case we keep the full set rather than crash the
+        whitening covariance).
+        """
+        threshold = float(getattr(self.config, "discrimination_min_pq", 0.0) or 0.0)
+        debug: Dict[str, object] = {
+            "enabled": threshold > 0.0,
+            "threshold": threshold,
+            "kept_count": len(rubric_list),
+            "dropped_count": 0,
+            "dropped": [],
+        }
+        if threshold <= 0.0 or candidate_count < 2 or not rubric_list:
+            return rubric_list, list(evaluations), debug
+
+        per_rubric_total: Dict[str, int] = {}
+        per_rubric_yes: Dict[str, int] = {}
+        for ev in evaluations:
+            per_rubric_total[ev.rubric_id] = per_rubric_total.get(ev.rubric_id, 0) + 1
+            if ev.satisfied:
+                per_rubric_yes[ev.rubric_id] = per_rubric_yes.get(ev.rubric_id, 0) + 1
+
+        kept_ids: List[str] = []
+        dropped: List[Dict[str, object]] = []
+        for rubric in rubric_list:
+            total = per_rubric_total.get(rubric.rubric_id, 0)
+            if total == 0:
+                # Defensive: keep rubrics that the eval pass missed entirely.
+                kept_ids.append(rubric.rubric_id)
+                continue
+            yes = per_rubric_yes.get(rubric.rubric_id, 0)
+            p = yes / total
+            pq = p * (1.0 - p)
+            if pq < threshold:
+                dropped.append(
+                    {
+                        "rubric_id": rubric.rubric_id,
+                        "fire_rate": p,
+                        "pq": pq,
+                    }
+                )
+            else:
+                kept_ids.append(rubric.rubric_id)
+
+        if not kept_ids:
+            debug["fallback"] = "all_rubrics_dropped_kept_full_set"
+            debug["dropped_count"] = len(dropped)
+            debug["dropped"] = dropped
+            return rubric_list, list(evaluations), debug
+
+        kept_set = set(kept_ids)
+        kept_rubrics = [r for r in rubric_list if r.rubric_id in kept_set]
+        kept_evaluations = [ev for ev in evaluations if ev.rubric_id in kept_set]
+        debug["kept_count"] = len(kept_rubrics)
+        debug["dropped_count"] = len(dropped)
+        debug["dropped"] = dropped
+        return kept_rubrics, kept_evaluations, debug
 
     def _evaluate_decomposition_children(
         self,
@@ -710,14 +912,65 @@ class RRDEngine:
         example: ExampleRecord,
         candidates: Sequence[CandidateNote],
         evaluation_candidates: Sequence[CandidateNote] | None = None,
+        seed_initial_rubrics: Sequence[str] = (),
     ) -> Dict[str, object]:
+        """Run recursive rubric decomposition for one example.
+
+        ``seed_initial_rubrics``: optional list of pre-discovered rubric texts to
+        seed the initial proposal queue with. Each seed text is run through the same
+        ``_accept_candidate_rubric`` filter chain (overlap + conflict + misalignment)
+        as the freshly proposed rubrics, so seeds that aren't actually relevant to
+        this example are pruned. This is the integration point for retrieval-based
+        validation flows: the medical pipeline embeds the validation prompt, retrieves
+        the top-K nearest training rubrics from a frozen index, applies a Sonnet
+        relevance filter, then passes the survivors here as seeds. Seeds are tagged
+        with ``source_stage="initial_seed"`` for downstream forensics.
+        """
         active_rubrics: List[RubricCriterion] = []
         rejected: List[Dict[str, str]] = []
         superseded: List[str] = []
         queue: List[RubricCriterion] = []
         round_index = 0
 
+        # Process seeds first, then freshly proposed rubrics. Dedupe so a seed that
+        # happens to match a fresh proposal isn't accepted twice; the seed wins
+        # because it's processed first.
+        seen_normalized: set[str] = set()
+        seed_accepted = 0
+        seed_rejected = 0
+        for seed_text in seed_initial_rubrics or ():
+            normalized = normalize_rubric_text(seed_text or "")
+            if not normalized:
+                continue
+            normalized_lower = normalized.lower()
+            if normalized_lower in seen_normalized:
+                continue
+            seen_normalized.add(normalized_lower)
+            rubric, reason = self._accept_candidate_rubric(
+                example=example,
+                candidates=candidates,
+                existing_active_rubrics=active_rubrics,
+                rubric_text=normalized,
+                source_stage="initial_seed",
+                depth=0,
+                round_index=round_index,
+            )
+            round_index += 1
+            if rubric is None:
+                rejected.append({"rubric": normalized, "reason": reason or "seed_rejected"})
+                seed_rejected += 1
+                continue
+            active_rubrics.append(rubric)
+            queue.append(rubric)
+            seed_accepted += 1
+
         for rubric_text in self.propose_initial_rubrics(example, candidates, include_responses=True):
+            normalized = normalize_rubric_text(rubric_text or "")
+            normalized_lower = normalized.lower()
+            if normalized_lower in seen_normalized:
+                # Already accepted (or rejected) as a seed; skip the duplicate.
+                continue
+            seen_normalized.add(normalized_lower)
             rubric, reason = self._accept_candidate_rubric(
                 example=example,
                 candidates=candidates,
@@ -741,8 +994,24 @@ class RRDEngine:
             current = queue.pop(0)
             current.coverage_count = self._coverage_count(example, candidates, current)
 
+            # Adaptive coverage gate (v2): rubrics that fire on at least half
+            # the *actual* candidate pool qualify for decomposition.  With
+            # shard 0's mean pool of 5.82 (vs target 8), the original static
+            # ``coverage_count > decomposition_threshold`` (default 4) required
+            # 5+ satisfied candidates -- ~85-100% of the small pools -- which
+            # is why the true decomposition success rate was only 18 / 965 =
+            # 1.9%.  The adaptive rule uses ``ceil(len(candidates) / 2)`` as
+            # the threshold (clamped at the configured ``decomposition_threshold``
+            # so we never become *stricter* than the original), with a hard
+            # floor of 2 satisfied candidates regardless of pool size.
+            half_pool = (len(candidates) + 1) // 2
+            adaptive_threshold = max(2, half_pool)
+            effective_threshold = min(
+                adaptive_threshold,
+                max(1, int(self.config.decomposition_threshold)),
+            )
             if (
-                current.coverage_count > self.config.decomposition_threshold
+                current.coverage_count >= effective_threshold
                 and current.depth < self.config.max_decomposition_depth
                 and len(active_rubrics) < self.config.max_final_rubrics
             ):
@@ -817,6 +1086,12 @@ class RRDEngine:
         )
         scored["rrd_artifact"] = {
             "initial_rubric_count": len([rubric for rubric in active_rubrics if rubric.source_stage == "initial"]),
+            "initial_seed_rubric_count": len(
+                [rubric for rubric in active_rubrics if rubric.source_stage == "initial_seed"]
+            ),
+            "seed_rubric_input_count": len(seed_initial_rubrics or ()),
+            "seed_rubric_accepted_count": seed_accepted,
+            "seed_rubric_rejected_count": seed_rejected,
             "final_rubric_count": len(final_rubrics),
             "rejected": rejected,
             "superseded": superseded,

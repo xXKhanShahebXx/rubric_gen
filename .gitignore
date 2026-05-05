@@ -9,3 +9,9 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Large per-rubric satisfaction evaluation dumps (>100MB, exceed GitHub's
+# per-file limit). The slim per-row rubric files (medical_gpt5_b_regen_4k_*_rubrics.jsonl)
+# are committed; the per-(rubric, candidate) judgment dumps are not.
+/data/medical_gpt5_b_regen_4k_rubric_evaluations.jsonl
+/data/medical_gpt5_b_regen_4k_v2_rubric_evaluations.jsonl

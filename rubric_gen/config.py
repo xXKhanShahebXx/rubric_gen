@@ -119,6 +119,11 @@ class PipelineConfig:
     shard_index: int = 0
     preset: Optional[str] = None
     reference_fields: List[str] = field(default_factory=list)
+    medical_rubric_index_path: Optional[Path] = None
+    medical_rubric_retrieval_top_k: int = 8
+    medical_rubric_filter_enabled: bool = True
+    medical_rubric_filter_strictness: str = "conservative"
+    medical_rubric_filter_model: Optional[ModelSpec] = None
     paper_include_reference_eval_anchor: bool = False
     paper_prompt_only_baseline: bool = True
     paper_response_only_judging: bool = False
@@ -133,6 +138,18 @@ class PipelineConfig:
     decomposition_min_discrimination_gain: float = DEFAULT_DECOMPOSITION_MIN_DISCRIMINATION_GAIN
     decomposition_max_pair_overlap: float = DEFAULT_DECOMPOSITION_MAX_PAIR_OVERLAP
     covariance_ridge: float = 1e-3
+    # v2 Tier A4: multi-sample majority-vote satisfaction.  Default 1
+    # preserves single-sample (legacy) behaviour and cache hits; bump to 3
+    # to attack the 12.5% score-tie regime by adding signal to borderline
+    # rubrics.  Sample 0 always uses temp 0.0 (so its cache key is the legacy
+    # single-sample key); samples 1..N-1 use ``rubric_satisfaction_temperature``.
+    rubric_satisfaction_samples: int = 1
+    rubric_satisfaction_temperature: float = 0.4
+    # v2 Tier A5: post-RRD discrimination filter.  Drop rubrics with
+    # min(p, 1-p) below this threshold during ``score_rubric_set``.  Default
+    # 0.0 keeps all rubrics (back-compat); 0.05 drops rubrics that fire on
+    # >95% or <5% of candidates (the "useless" bucket from shard 0 v2 angle D).
+    discrimination_min_pq: float = 0.0
     writer_models: List[ModelSpec] = field(default_factory=list)
     rubric_proposer: Optional[ModelSpec] = None
     proposer_models: List[ModelSpec] = field(default_factory=list)
@@ -506,6 +523,16 @@ def build_config(
     shard_index: int = 0,
     preset: Optional[str] = None,
     reference_fields: Optional[List[str]] = None,
+    medical_rubric_index_path: Optional[str] = None,
+    medical_rubric_retrieval_top_k: Optional[int] = None,
+    medical_rubric_filter_enabled: Optional[bool] = None,
+    medical_rubric_filter_strictness: Optional[str] = None,
+    medical_rubric_filter_model: Optional[str] = None,
+    rubric_satisfaction_samples: Optional[int] = None,
+    rubric_satisfaction_temperature: Optional[float] = None,
+    discrimination_min_pq: Optional[float] = None,
+    decomposition_min_recall: Optional[float] = None,
+    decomposition_min_discrimination_gain: Optional[float] = None,
 ) -> PipelineConfig:
     preset_resolved = _apply_preset_defaults(
         preset,
@@ -627,6 +654,33 @@ def build_config(
             "pass --paper-pairwise-judge-model."
         )
 
+    effective_medical_index_path: Optional[Path] = (
+        Path(medical_rubric_index_path)
+        if medical_rubric_index_path
+        else None
+    )
+    effective_medical_top_k = max(
+        0, int(medical_rubric_retrieval_top_k) if medical_rubric_retrieval_top_k is not None else 8
+    )
+    if medical_rubric_filter_enabled is None:
+        # Default: filter is on whenever an index is supplied (it's the whole point
+        # of the retrieval), off otherwise.
+        effective_medical_filter_enabled = effective_medical_index_path is not None
+    else:
+        effective_medical_filter_enabled = bool(medical_rubric_filter_enabled)
+    raw_strictness = (medical_rubric_filter_strictness or "conservative").strip().lower()
+    if raw_strictness not in {"conservative", "aggressive"}:
+        raise ValueError(
+            "--relevance-filter-strictness must be 'conservative' or 'aggressive'; "
+            f"got {medical_rubric_filter_strictness!r}."
+        )
+    effective_medical_filter_strictness = raw_strictness
+    effective_medical_filter_model: Optional[ModelSpec] = (
+        parse_model_spec(medical_rubric_filter_model, alias_prefix="medical-relevance-filter")
+        if medical_rubric_filter_model
+        else None
+    )
+
     config = PipelineConfig(
         dataset_path=Path(dataset_path) if dataset_path else DEFAULT_DATASET_PATH,
         output_dir=Path(output_dir) if output_dir else DEFAULT_OUTPUT_DIR,
@@ -651,6 +705,11 @@ def build_config(
         shard_index=shard_index,
         preset=preset,
         reference_fields=effective_reference_fields,
+        medical_rubric_index_path=effective_medical_index_path,
+        medical_rubric_retrieval_top_k=effective_medical_top_k,
+        medical_rubric_filter_enabled=effective_medical_filter_enabled,
+        medical_rubric_filter_strictness=effective_medical_filter_strictness,
+        medical_rubric_filter_model=effective_medical_filter_model,
         writer_models=configured_writer_models,
         paper_pairwise_label_mode=effective_paper_pairwise_label_mode,
         paper_response_only_judging=paper_mode,
@@ -670,5 +729,16 @@ def build_config(
         config.max_final_rubrics = max_final_rubrics
     if max_decomposition_depth is not None:
         config.max_decomposition_depth = max_decomposition_depth
+    # v2 Tier A4 + A5 + A6: optional overrides for the new tunables.
+    if rubric_satisfaction_samples is not None:
+        config.rubric_satisfaction_samples = max(1, int(rubric_satisfaction_samples))
+    if rubric_satisfaction_temperature is not None:
+        config.rubric_satisfaction_temperature = float(rubric_satisfaction_temperature)
+    if discrimination_min_pq is not None:
+        config.discrimination_min_pq = max(0.0, float(discrimination_min_pq))
+    if decomposition_min_recall is not None:
+        config.decomposition_min_recall = float(decomposition_min_recall)
+    if decomposition_min_discrimination_gain is not None:
+        config.decomposition_min_discrimination_gain = float(decomposition_min_discrimination_gain)
     config.artifact_layout().ensure()
     return config

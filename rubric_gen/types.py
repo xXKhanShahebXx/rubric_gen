@@ -33,6 +33,16 @@ class ExampleRecord:
     reference_artifact: str = ""
     augmented_artifact: str = ""
     artifact_truncated: str = ""
+    # Pair-preference fields. Populated when the source row carries two labelled
+    # candidate responses (e.g. medical_gpt41_answers_rl.jsonl with
+    # reference_answer_a / reference_answer_b / correct_answer). When present,
+    # the candidate pool seeds two anchors (pair_response_a / pair_response_b)
+    # and the reporting layer computes a pair-preference accuracy metric vs the
+    # `pair_correct_label`. Empty for every dataset that does not carry such
+    # labels, preserving full backward compatibility.
+    pair_response_a: str = ""
+    pair_response_b: str = ""
+    pair_correct_label: str = ""
 
     def __post_init__(self) -> None:
         if not self.reference_artifact and self.reference_note:
@@ -66,6 +76,17 @@ class ExampleRecord:
             if value.strip():
                 return value
         return ""
+
+    @property
+    def has_pair_candidates(self) -> bool:
+        """True when both pair responses are present.
+
+        Used by ``candidate_generation._anchor_candidates`` to decide whether to
+        emit pair anchors (and skip the legacy gold/augmented anchors), and by
+        ``evaluation/reporting`` to decide whether to evaluate the
+        pair-preference metric for this example.
+        """
+        return bool(self.pair_response_a and self.pair_response_b)
 
 
 @dataclass

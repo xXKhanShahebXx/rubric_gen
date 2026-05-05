@@ -1,0 +1,55 @@
+% =====================================================================
+% Preamble additions required to compile methodology.tex
+% Drop these \usepackage{} lines into the main paper preamble (alongside
+% whatever the venue template already loads).  None of these clash with
+% standard NeurIPS / ICML / ACL / ICLR / arXiv class files.
+% =====================================================================
+
+% --- math ---
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\newtheorem{remark}{Remark}        % \begin{remark}[Optional title] ... \end{remark}
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
+
+% --- citations ---
+% natbib gives you \citep{} and \citet{} which the section uses.
+% If your venue template already loads natbib (most ML/NLP templates do),
+% delete this line; the \citep{} / \citet{} calls will work unchanged.
+\usepackage[authoryear,round]{natbib}
+
+% --- algorithm / pseudocode ---
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+% (algpseudocode replaces the older algorithmic package and supports
+%  \Statex, \Comment, \Require, \Ensure used in Algorithm 1.)
+
+% --- tables ---
+\usepackage{booktabs}     % \toprule / \midrule / \bottomrule
+
+% --- figures (TikZ + libraries the architecture diagram uses) ---
+\usepackage{tikz}
+\usetikzlibrary{
+  positioning,
+  shapes.geometric,        % diamond gate
+  arrows.meta,             % stealth arrowheads
+  calc,                    % $(node)+(...)$ coordinate arithmetic
+  fit,                     % optional grouping boxes
+  backgrounds              % optional layered backgrounds
+}
+
+% --- code-style fonts (\texttt is sufficient; nothing extra needed) ---
+
+% --- optional: tighter equation spacing if your template is loose ---
+% \setlength{\abovedisplayskip}{4pt plus 1pt minus 1pt}
+% \setlength{\belowdisplayskip}{4pt plus 1pt minus 1pt}
+
+% =====================================================================
+% Notes on cross-references the section assumes you have defined
+% somewhere in the paper:
+%
+%   \label{sec:intro}        in Section 1 (Introduction)
+%   \label{sec:experiments}  in Section 4 (Experiments)
+%
+% The methodology file itself defines every other label it references.
+% =====================================================================

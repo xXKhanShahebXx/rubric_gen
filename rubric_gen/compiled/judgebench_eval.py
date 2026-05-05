@@ -73,8 +73,15 @@ from rubric_gen.compiled.holistic_judge import (
 )
 from rubric_gen.compiled.rubric_library import (
     RubricLibrary,
+    RubricLibraryCriterion,
     load_rubric_library,
     maybe_load_default_library,
+)
+from rubric_gen.compiled.relevance_filter import (
+    DEFAULT_FILTER_MODEL as _RELEVANCE_FILTER_DEFAULT_MODEL,
+    RelevanceFilterConfig,
+    filter_relevant_criteria,
+    parse_strictness as _parse_relevance_filter_strictness,
 )
 from rubric_gen.config import discover_default_comparison_judge_model, parse_model_spec
 from rubric_gen.llm_client import LLMRouter, extract_json_object, parse_yes_no
@@ -767,6 +774,16 @@ def _normalize_v2_config(v2_config: Optional[Mapping[str, Any]]) -> Dict[str, An
             v2.get("library_retrieval_top_k_by_family")
         ),
         "family_strict_library_mode": bool(v2.get("family_strict_library_mode", False)),
+        "library_relevance_filter_enabled": bool(
+            v2.get("library_relevance_filter_enabled", False)
+        ),
+        "library_relevance_filter_strictness": str(
+            v2.get("library_relevance_filter_strictness", "conservative")
+            or "conservative"
+        ).strip().lower(),
+        "library_relevance_filter_model": str(
+            v2.get("library_relevance_filter_model", "") or ""
+        ).strip(),
         "math_independent_solver_enabled": bool(v2.get("math_independent_solver_enabled", False)),
         "math_solver_samples": max(1, min(9, math_samples)),
         "math_solver_temperature": max(0.0, min(1.5, math_temp)),
@@ -919,6 +936,38 @@ def _policy_library_retrieval_top_k(
 
 def _policy_family_strict_library(policy: Mapping[str, Any]) -> bool:
     return bool(policy.get("family_strict_library_mode", False))
+
+
+def _policy_library_relevance_filter_enabled(policy: Mapping[str, Any]) -> bool:
+    return bool(policy.get("library_relevance_filter_enabled", False))
+
+
+def _policy_library_relevance_filter_strictness(policy: Mapping[str, Any]) -> str:
+    raw = policy.get("library_relevance_filter_strictness")
+    try:
+        return _parse_relevance_filter_strictness(raw)
+    except ValueError:
+        # Be permissive at policy-load time; fall back to the conservative default
+        # rather than crashing an in-flight eval on a stale policy field.
+        return _parse_relevance_filter_strictness(None)
+
+
+def _policy_library_relevance_filter_model(policy: Mapping[str, Any]) -> ModelSpec:
+    raw = str(policy.get("library_relevance_filter_model", "") or "").strip()
+    if not raw:
+        return _RELEVANCE_FILTER_DEFAULT_MODEL
+    try:
+        return parse_model_spec(raw, default_alias="library_relevance_filter")
+    except Exception:
+        return _RELEVANCE_FILTER_DEFAULT_MODEL
+
+
+def _build_library_relevance_filter_config(policy: Mapping[str, Any]) -> RelevanceFilterConfig:
+    return RelevanceFilterConfig(
+        enabled=_policy_library_relevance_filter_enabled(policy),
+        model_spec=_policy_library_relevance_filter_model(policy),
+        strictness=_policy_library_relevance_filter_strictness(policy),
+    )
 
 
 def _policy_math_independent_solver_enabled(policy: Mapping[str, Any]) -> bool:
@@ -1423,6 +1472,9 @@ def build_initial_frozen_policy(
     rrd_redundancy_threshold: float = 0.9,
     library_retrieval_top_k_by_family: Optional[Mapping[str, Any]] = None,
     family_strict_library_mode: bool = False,
+    library_relevance_filter_enabled: bool = False,
+    library_relevance_filter_strictness: str = "conservative",
+    library_relevance_filter_model: str = "",
     math_independent_solver_enabled: bool = False,
     math_solver_samples: int = 1,
     math_solver_temperature: float = 0.5,
@@ -1575,6 +1627,11 @@ def build_initial_frozen_policy(
             library_retrieval_top_k_by_family
         ),
         "family_strict_library_mode": bool(family_strict_library_mode),
+        "library_relevance_filter_enabled": bool(library_relevance_filter_enabled),
+        "library_relevance_filter_strictness": str(
+            library_relevance_filter_strictness or "conservative"
+        ).strip().lower(),
+        "library_relevance_filter_model": str(library_relevance_filter_model or "").strip(),
         "math_independent_solver_enabled": bool(math_independent_solver_enabled),
         "math_solver_samples": max(1, min(9, int(math_solver_samples or 1))),
         "math_solver_temperature": max(0.0, min(1.5, float(math_solver_temperature or 0.5))),
@@ -2182,7 +2239,17 @@ def _maybe_library_rows_for_example(
     example: JudgeBenchJoinedExample,
     example_record: ExampleRecord,
     policy: Mapping[str, Any],
-) -> List[Dict[str, Any]]:
+    router: Optional[LLMRouter] = None,
+    relevance_filter_cache: Optional[JsonlCache] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Resolve the per-example library criteria and convert them to canonical rows.
+
+    Returns ``(rows, filter_debug)`` where ``rows`` is the canonical-proposal list to
+    prepend onto ``merged["canonical_proposals"]`` downstream and ``filter_debug`` is a
+    JSON-serialisable summary of the relevance-filter pass (empty dict when the filter
+    is disabled or no library criteria were retrieved). The caller is expected to
+    surface the debug payload in the per-pair artifact for forensics.
+    """
     family_top_k = _policy_library_retrieval_top_k(policy, example.source_family)
     profile = _policy_retrieval_profile(policy, example.source_family)
     uses_library = family_top_k > 0 or profile in {
@@ -2198,12 +2265,12 @@ def _maybe_library_rows_for_example(
         except (TypeError, ValueError):
             override_value = family_top_k
         if override_value <= 0:
-            return []
+            return [], {}
     if not uses_library:
-        return []
+        return [], {}
     library = _load_policy_rubric_library(policy)
     if library is None:
-        return []
+        return [], {}
     effective_top_k = max(family_top_k or 0, 4)
     effective_top_k = min(effective_top_k, 12)
     strict = _policy_family_strict_library(policy)
@@ -2212,6 +2279,18 @@ def _maybe_library_rows_for_example(
         limit=effective_top_k,
         strict=strict,
     )
+    filter_debug: Dict[str, Any] = {}
+    if criteria:
+        filter_cfg = _build_library_relevance_filter_config(policy)
+        if filter_cfg.enabled:
+            criteria, filter_debug = filter_relevant_criteria(
+                criteria,
+                prompt_text=example.question,
+                candidate_texts=[example.response_A, example.response_B],
+                config=filter_cfg,
+                router=router,
+                cache=relevance_filter_cache,
+            )
     rows: List[Dict[str, Any]] = []
     for criterion in criteria:
         row = criterion.to_canonical_row(
@@ -2219,7 +2298,7 @@ def _maybe_library_rows_for_example(
             pair_id=str(example.pair_id),
         )
         rows.append(row)
-    return rows
+    return rows, filter_debug
 
 
 def _build_pair_contexts_for_rrd(raw: Sequence[Mapping[str, Any]]) -> List[_RrdPairContext]:
@@ -5653,6 +5732,7 @@ def _process_judgebench_example(
     reference_answer_access: bool = True,
     retrieval_examples: Optional[Sequence[JudgeBenchJoinedExample]] = None,
     retrieval_fingerprint: str = "",
+    relevance_filter_cache: Optional[JsonlCache] = None,
 ) -> Dict[str, Any]:
     effective_example = _example_for_reference_access(example, reference_answer_access=reference_answer_access)
     example_path = examples_dir / f"{example.pair_id}.json"
@@ -5784,10 +5864,12 @@ def _process_judgebench_example(
                 }
             )
 
-        library_rows = _maybe_library_rows_for_example(
+        library_rows, library_filter_debug = _maybe_library_rows_for_example(
             example=effective_example,
             example_record=example_record,
             policy=policy,
+            router=router,
+            relevance_filter_cache=relevance_filter_cache,
         )
         if bool(policy.get("enable_rrd_filters", False)):
             pair_contexts_for_filters = [
@@ -5818,6 +5900,8 @@ def _process_judgebench_example(
         if library_rows:
             merged["canonical_proposals"] = library_rows + list(merged.get("canonical_proposals", []) or [])
             merged["library_rows_injected"] = len(library_rows)
+        if library_filter_debug:
+            merged["library_relevance_filter"] = library_filter_debug
         prepared_rows = _prepare_rows_for_scoring(
             merged["canonical_proposals"],
             example=effective_example,
@@ -6226,8 +6310,12 @@ def run_judgebench_split(
     judge_model = _resolve_scoring_model(judge_model_override)
     discovery_cache = JsonlCache(cache_dir / "discovery.jsonl", enabled=use_cache)
     scoring_cache = JsonlCache(cache_dir / "scoring.jsonl", enabled=use_cache)
+    relevance_filter_cache = JsonlCache(
+        cache_dir / "rubric_relevance_filter.jsonl", enabled=use_cache
+    )
     discovery_cache.load()
     scoring_cache.load()
+    relevance_filter_cache.load()
     retrieval_examples = list(retrieval_examples or [])
     retrieval_fingerprint = (
         stable_hash(
@@ -6283,6 +6371,7 @@ def run_judgebench_split(
             reference_answer_access=reference_answer_access,
             retrieval_examples=retrieval_examples,
             retrieval_fingerprint=retrieval_fingerprint,
+            relevance_filter_cache=relevance_filter_cache,
         )
 
     if worker_count == 1:
@@ -7574,6 +7663,16 @@ def run_judgebench_train_only_development(
         ) or {},
         family_strict_library_mode=bool(
             normalized_v2_config.get("family_strict_library_mode", False)
+        ),
+        library_relevance_filter_enabled=bool(
+            normalized_v2_config.get("library_relevance_filter_enabled", False)
+        ),
+        library_relevance_filter_strictness=str(
+            normalized_v2_config.get("library_relevance_filter_strictness", "conservative")
+            or "conservative"
+        ),
+        library_relevance_filter_model=str(
+            normalized_v2_config.get("library_relevance_filter_model", "") or ""
         ),
         math_independent_solver_enabled=bool(
             normalized_v2_config.get("math_independent_solver_enabled", False)

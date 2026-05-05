@@ -145,6 +145,16 @@ def _v2_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "rubric_library_path": str(getattr(args, "rubric_library_path", "") or ""),
         "enable_rrd_filters": bool(getattr(args, "enable_rrd_filters", False)),
         "rrd_redundancy_threshold": float(getattr(args, "rrd_redundancy_threshold", 0.9) or 0.9),
+        "library_relevance_filter_enabled": bool(
+            getattr(args, "library_relevance_filter", False)
+        ),
+        "library_relevance_filter_strictness": str(
+            getattr(args, "library_relevance_filter_strictness", "conservative")
+            or "conservative"
+        ).strip().lower(),
+        "library_relevance_filter_model": str(
+            getattr(args, "library_relevance_filter_model", "") or ""
+        ).strip(),
     }
 
 
@@ -370,6 +380,28 @@ def _add_v2_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.9,
         help="Jaccard threshold used by the RRD redundancy filter. Lower = more aggressive pruning.",
+    )
+    parser.add_argument(
+        "--library-relevance-filter",
+        action="store_true",
+        help="Enable a Sonnet-based relevance filter on retrieved library criteria. The "
+        "filter drops criteria judged HIGH-confidence-irrelevant to the pair's prompt + "
+        "responses (e.g. cardiology criterion retrieved for an endocrine prompt).",
+    )
+    parser.add_argument(
+        "--library-relevance-filter-strictness",
+        type=str,
+        default="conservative",
+        choices=["conservative", "aggressive"],
+        help="conservative: drop only IRRELEVANT verdicts (UNCERTAIN survives). "
+        "aggressive: keep only APPLICABLE verdicts.",
+    )
+    parser.add_argument(
+        "--library-relevance-filter-model",
+        type=str,
+        default="",
+        help="Optional provider:model for the relevance filter (e.g. anthropic:claude-sonnet-4-5-20250929). "
+        "Empty -> default Sonnet 4.5.",
     )
 
 

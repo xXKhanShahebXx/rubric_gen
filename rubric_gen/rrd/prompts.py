@@ -5,38 +5,167 @@ from typing import Iterable
 from rubric_gen.types import CandidateNote, ExampleRecord
 
 
-INITIAL_RUBRIC_SYSTEM = """You are a rubric designer for an LLM-as-a-judge system.
+# Forced rules shared by every task-type-specific system prompt.  These are
+# the v2 deltas designed to attack the diagnostic findings:
+#   * 74% of shard-0 rejections are `overlap`, driven in part by the proposer
+#     producing many near-duplicates that all start with the same template.
+#   * Top-50 4-token prefixes cover 72.2% of all rubrics; "the note correctly
+#     identifies" alone is 9.0% of the library.
+#   * 11.8% of rubrics have p(1-p)<0.05 (fire on >95% or <5% of candidates),
+#     i.e. provide effectively no discrimination signal.
+# The forced rules below ban the over-used templates and require each rubric
+# to be a substantive discrimination axis.
+_FORCED_RUBRIC_RULES = """\
+HARD CONSTRAINTS:
+- Each rubric must be a binary YES/NO judgement (no scales, no "both A and B").
+- Each rubric must be atomic (one criterion per rubric).
+- Each rubric must be a substantive discrimination axis: at least one
+  plausible answer would satisfy it AND at least one plausible answer would
+  fail it.  Do NOT propose criteria that virtually every reasonable answer
+  would satisfy (or fail).
+- Do NOT copy or paraphrase any specific candidate response.
+- Do NOT propose more than one rubric on the same intent.
 
-Design rubrics that distinguish stronger and weaker clinical notes for the given transcript.
-Only propose rubrics you are confident about.
-Each rubric must be:
-- binary and judgeable,
-- clinically grounded in the transcript and note-writing task,
-- atomic (one criterion per rubric),
-- useful for distinguishing note quality rather than generic writing advice,
-- not redundant with other rubric items,
-- not a direct copy of a candidate note.
+BANNED OPENING TEMPLATES (these are over-used and produce non-discriminative
+rubrics; do not start any rubric with them or close paraphrases). The ban
+covers all noun-substitutions ("note", "answer", "response", "explanation",
+"output"):
+- "The {note,answer,response,explanation,output} correctly identifies ..."
+- "The {note,answer,response,explanation,output} includes a ..." / "... includes the ..."
+- "The {note,answer,response,explanation,output} provides a ..."
+- "The {note,answer,response,explanation,output} discusses the ..."
+- "The {note,answer,response,explanation,output} accurately identifies ..."
+- "The {note,answer,response,explanation,output} accurately describes ..."
+- "The {note,answer,response,explanation,output} addresses the ..."
+- "The {note,answer,response,explanation,output} mentions the ..."
 
-Output only rubric tags in this exact format:
+Instead, lead with the SPECIFIC clinical claim or test the rubric requires.
+For example: "Hypochlorous acid is named as the disinfecting agent" is
+preferred over "The answer correctly identifies the disinfecting agent".
+
+PREFER discrimination dimensions (when applicable to the task):
+1. Factual correctness on the central claim or required answer.
+2. Completeness on the explicit sub-questions or steps the prompt asks for.
+3. Explicit, traceable reasoning chain (when the task requires reasoning).
+4. Safety, contraindications, or harms when relevant.
+5. Format / structure faithful to what the prompt explicitly requested.
+6. Calibration: presence of warranted uncertainty, absence of unwarranted
+   certainty.
+
+AVOID:
+- Generic writing advice ("is well-structured", "is clear", "is well-written").
+- Vague qualitative claims ("is clinically accurate" without saying about
+  what).
+- Criteria that depend on style preference rather than substance.
+"""
+
+
+_OUTPUT_FORMAT = """\
+Output only rubric tags in this exact format, one per rubric:
 <RUBRIC> ... </RUBRIC>
 """
 
 
-INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY = """You are a rubric designer for an LLM-as-a-judge system.
+# Task-type-specific framing.  The dispatcher in ``select_initial_rubric_system``
+# picks the right one off ``ExampleRecord.task_profile_id``.  All variants stack
+# the forced rules + output format above.
 
-Design a comprehensive set of prompt-specific rubrics for evaluating responses to the given task.
-Only propose rubrics you are confident about.
-Each rubric must be:
-- binary and judgeable,
-- prompt-specific,
-- atomic (one criterion per rubric),
-- self-contained,
-- useful for distinguishing stronger from weaker responses,
-- not generic writing advice.
+_INITIAL_RUBRIC_SYSTEM_NOTE = """You are a rubric designer for an LLM-as-a-judge system that evaluates clinical notes.
 
-Output only rubric tags in this exact format:
-<RUBRIC> ... </RUBRIC>
+Design rubrics that distinguish stronger and weaker clinical notes for the given transcript or task.
+Each rubric should be clinically grounded in the documentation task at hand.
 """
+
+
+_INITIAL_RUBRIC_SYSTEM_QA = """You are a rubric designer for an LLM-as-a-judge system that evaluates answers to medical questions.
+
+The task is question-answering, not note-writing.  Design rubrics that distinguish a correct,
+well-reasoned answer from a wrong, hand-wavy, or incomplete one.  Focus first on whether the
+answer reaches the correct conclusion; secondarily on whether the supporting reasoning is sound.
+"""
+
+
+_INITIAL_RUBRIC_SYSTEM_AGENTIC = """You are a rubric designer for an LLM-as-a-judge system that evaluates outputs of an agentic medical workflow.
+
+The task is producing the artifact a workflow step asks for (e.g. a triage decision, an action
+plan, a tool-call rationale).  Design rubrics that distinguish a complete, faithful, actionable
+output from one that fabricates state, drops required steps, or misrepresents tool results.
+"""
+
+
+_INITIAL_RUBRIC_SYSTEM_DOCUMENTATION = """You are a rubric designer for an LLM-as-a-judge system that evaluates a requested clinical documentation artifact.
+
+The task is producing a specific documentation artifact (a discharge summary, problem list,
+patient instructions, etc.) -- not arbitrary free text.  Design rubrics that distinguish an
+artifact that matches the requested style and content from one that is generic, off-format, or
+missing required sections.
+"""
+
+
+_INITIAL_RUBRIC_SYSTEM_REWRITE = """You are a rubric designer for an LLM-as-a-judge system that evaluates a rewrite or edit task.
+
+The task is rewriting or editing an existing text per an explicit instruction.  Design rubrics
+that distinguish a faithful, instruction-following rewrite from one that drifts in meaning,
+adds unsupported facts, or fails to apply the requested change.
+"""
+
+
+_INITIAL_RUBRIC_SYSTEM_CDS = """You are a rubric designer for an LLM-as-a-judge system that evaluates a clinical decision-support output.
+
+The task is providing decision support grounded in the clinical context (e.g. recommended next
+step, risk assessment, options comparison).  Design rubrics that distinguish a recommendation
+that is correct, justified by the evidence in the prompt, and safe, from one that is wrong,
+unsupported, or risky.
+"""
+
+
+def _compose_system(framing: str) -> str:
+    return framing.strip() + "\n\n" + _FORCED_RUBRIC_RULES + "\n" + _OUTPUT_FORMAT
+
+
+# Public symbols.  ``INITIAL_RUBRIC_SYSTEM`` is kept (with the new forced
+# rules + clinical-note framing) so external callers and tests that import the
+# name still resolve.  ``INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY`` likewise.
+INITIAL_RUBRIC_SYSTEM = _compose_system(_INITIAL_RUBRIC_SYSTEM_NOTE)
+INITIAL_RUBRIC_SYSTEM_QA = _compose_system(_INITIAL_RUBRIC_SYSTEM_QA)
+INITIAL_RUBRIC_SYSTEM_AGENTIC = _compose_system(_INITIAL_RUBRIC_SYSTEM_AGENTIC)
+INITIAL_RUBRIC_SYSTEM_DOCUMENTATION = _compose_system(_INITIAL_RUBRIC_SYSTEM_DOCUMENTATION)
+INITIAL_RUBRIC_SYSTEM_REWRITE = _compose_system(_INITIAL_RUBRIC_SYSTEM_REWRITE)
+INITIAL_RUBRIC_SYSTEM_CDS = _compose_system(_INITIAL_RUBRIC_SYSTEM_CDS)
+INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY = _compose_system(
+    "You are a rubric designer for an LLM-as-a-judge system.\n\n"
+    "Design a comprehensive set of prompt-specific rubrics for evaluating responses to the given\n"
+    "task.  Tailor the rubrics to the prompt; avoid generic writing advice."
+)
+
+
+# Dispatcher off ExampleRecord.task_profile_id.  Falls back to the QA framing
+# (the most common shard-0 family at 88%) when the task profile is unknown,
+# rather than the original clinical-note framing -- because the medical_o1
+# corpus is dominated by Q&A, not free-form notes, which is why the
+# "the note correctly identifies" template was so over-used.
+_TASK_PROMPT_DISPATCH = {
+    "general_instruction_following": INITIAL_RUBRIC_SYSTEM_QA,
+    "clinical_decision_support": INITIAL_RUBRIC_SYSTEM_CDS,
+    "agentic_workflows": INITIAL_RUBRIC_SYSTEM_AGENTIC,
+    "documentation_variants": INITIAL_RUBRIC_SYSTEM_DOCUMENTATION,
+    "rewrite_editing": INITIAL_RUBRIC_SYSTEM_REWRITE,
+    "note_documentation": INITIAL_RUBRIC_SYSTEM,
+}
+
+
+def select_initial_rubric_system(example: ExampleRecord, include_responses: bool = True) -> str:
+    """Pick the initial-rubric system prompt based on task type.
+
+    Falls through to the prompt-only variant when ``include_responses`` is
+    False (used by the one-shot baseline path).  Otherwise dispatches off
+    ``example.task_profile_id``; unknown profiles fall back to the Q&A
+    variant, which is the modal shard-0 family.
+    """
+    if not include_responses:
+        return INITIAL_RUBRIC_SYSTEM_PROMPT_ONLY
+    profile = (example.task_profile_id or "").strip().lower()
+    return _TASK_PROMPT_DISPATCH.get(profile, INITIAL_RUBRIC_SYSTEM_QA)
 
 
 DECOMPOSITION_SYSTEM = """You are a rubric designer for an LLM-as-a-judge system.

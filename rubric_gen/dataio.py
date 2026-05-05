@@ -132,6 +132,38 @@ _STRUCTURED_SUMMARY_KEYS: Sequence[str] = (
     "structured_context",
 )
 
+# Pair-preference dataset schema. When a row carries TWO candidate responses
+# plus a label naming the correct one (e.g.
+# medical_gpt41_answers_rl.jsonl: ``reference_answer_a`` /
+# ``reference_answer_b`` / ``correct_answer``), the loader populates the
+# ``pair_response_a`` / ``pair_response_b`` / ``pair_correct_label`` fields on
+# the ``ExampleRecord``. Downstream, ``_anchor_candidates`` builds two
+# pair anchors and ``evaluation/reporting`` adds a pair-preference accuracy
+# column to the report.
+_PAIR_RESPONSE_A_KEYS: Sequence[str] = (
+    "reference_answer_a",
+    "response_a",
+    "answer_a",
+    "candidate_a",
+    "pair_response_a",
+)
+
+_PAIR_RESPONSE_B_KEYS: Sequence[str] = (
+    "reference_answer_b",
+    "response_b",
+    "answer_b",
+    "candidate_b",
+    "pair_response_b",
+)
+
+_PAIR_LABEL_KEYS: Sequence[str] = (
+    "correct_answer",
+    "preferred_answer",
+    "pair_correct_label",
+    "winner",
+    "label",
+)
+
 _KNOWN_ROW_KEYS = {
     "source",
     "source_id",
@@ -147,7 +179,58 @@ _KNOWN_ROW_KEYS = {
     *_AUGMENTED_ARTIFACT_KEYS,
     *_TRUNCATED_ARTIFACT_KEYS,
     *_STRUCTURED_SUMMARY_KEYS,
+    *_PAIR_RESPONSE_A_KEYS,
+    *_PAIR_RESPONSE_B_KEYS,
+    *_PAIR_LABEL_KEYS,
 }
+
+
+def _normalize_pair_label(value: Any) -> str:
+    """Normalise a ``correct_answer``-style value into ``"a"``, ``"b"``, or ``""``.
+
+    Accepts any of ``"a"``, ``"A"``, ``"reference_answer_a"``, ``"response_a"``,
+    ``"answer_a"``, ``"candidate_a"``, ``"pair_response_a"`` (and the ``b``
+    counterparts). Anything else maps to ``""`` (= unevaluable for pair
+    preference). Numeric ``0`` / ``1`` are also accepted as a fallback (0 -> A,
+    1 -> B) since some preference datasets encode the winner as an integer.
+    """
+    raw = value
+    if raw is None:
+        return ""
+    if isinstance(raw, bool):
+        # Avoid bool being treated as an int below; ambiguous semantics.
+        return ""
+    if isinstance(raw, (int, float)):
+        as_int = int(raw)
+        if as_int == 0:
+            return "a"
+        if as_int == 1:
+            return "b"
+        return ""
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    a_aliases = {
+        "a",
+        "reference_answer_a",
+        "response_a",
+        "answer_a",
+        "candidate_a",
+        "pair_response_a",
+    }
+    b_aliases = {
+        "b",
+        "reference_answer_b",
+        "response_b",
+        "answer_b",
+        "candidate_b",
+        "pair_response_b",
+    }
+    if text in a_aliases:
+        return "a"
+    if text in b_aliases:
+        return "b"
+    return ""
 
 
 def _clean_text(value: Any) -> str:
@@ -314,15 +397,39 @@ def _apply_split_and_shard(
 
     * `split="train"` selects the first `train_size` rows, then partitions
       them into `num_shards` contiguous shards and returns shard `shard_index`.
-    * `split="val"`   selects rows `[train_size, train_size + val_size)`.
-    * `split="all"` / `None` returns all rows unchanged.
+    * `split="val"`   selects rows `[train_size, train_size + val_size)`,
+      ignoring `num_shards`.
+    * `split="all"` / `None` selects every row. When `num_shards > 1` the
+      whole dataset is partitioned into `num_shards` equal contiguous shards
+      and shard `shard_index` is returned -- this enables team-machine
+      sharding of standalone validation datasets that aren't split out of
+      the training corpus (e.g. medical_gpt41_answers_rl).
 
     The shard partition is contiguous (rows 0..N/K-1 → shard 0, etc.). For 3000
     train rows with `num_shards=3`, shard 0 covers rows [0, 1000), shard 1
-    covers [1000, 2000), and shard 2 covers [2000, 3000).
+    covers [1000, 2000), and shard 2 covers [2000, 3000). Same arithmetic
+    applies to `split="all"`: 4000 rows / 4 shards => 1000 rows / shard.
     """
+    if num_shards < 1:
+        raise ValueError("num_shards must be >= 1.")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(
+            f"shard_index must be in [0, {num_shards}); got {shard_index}."
+        )
+
     if split is None or split == "all":
-        return rows
+        if num_shards == 1:
+            return rows
+        if len(rows) % num_shards != 0:
+            raise ValueError(
+                f"Total row count ({len(rows)}) is not evenly divisible by "
+                f"num_shards ({num_shards}); refusing to silently truncate. "
+                "Either pick a divisible num_shards or pre-trim the source file."
+            )
+        shard_size = len(rows) // num_shards
+        start = shard_index * shard_size
+        end = start + shard_size
+        return rows[start:end]
 
     if split not in {"train", "val"}:
         raise ValueError(
@@ -331,12 +438,6 @@ def _apply_split_and_shard(
 
     if train_size < 0 or val_size < 0:
         raise ValueError("train_size and val_size must be non-negative.")
-    if num_shards < 1:
-        raise ValueError("num_shards must be >= 1.")
-    if shard_index < 0 or shard_index >= num_shards:
-        raise ValueError(
-            f"shard_index must be in [0, {num_shards}); got {shard_index}."
-        )
 
     if split == "val":
         return rows[train_size : train_size + val_size]
@@ -433,6 +534,20 @@ def load_examples(
                 if structured_summary is not None:
                     break
 
+        # Pair-preference fields. Empty for any dataset that does not carry
+        # both response candidates plus a label. When both responses are
+        # populated, `_normalize_pair_label` resolves the ground-truth label
+        # to "a" / "b" / "" (unevaluable).
+        pair_response_a = _first_present_text(row, _PAIR_RESPONSE_A_KEYS)
+        pair_response_b = _first_present_text(row, _PAIR_RESPONSE_B_KEYS)
+        pair_correct_label = ""
+        if pair_response_a and pair_response_b:
+            for key in _PAIR_LABEL_KEYS:
+                if key in row:
+                    pair_correct_label = _normalize_pair_label(row.get(key))
+                    if pair_correct_label:
+                        break
+
         example = ExampleRecord(
             example_id=_build_example_id(source, source_id, row_index),
             source=source,
@@ -451,6 +566,9 @@ def load_examples(
             reference_artifact=reference_artifact or _clean_text(row.get("reference_note")),
             augmented_artifact=augmented_artifact or _clean_text(row.get("augmented_note")),
             artifact_truncated=artifact_truncated or _clean_text(row.get("note_truncated")),
+            pair_response_a=pair_response_a,
+            pair_response_b=pair_response_b,
+            pair_correct_label=pair_correct_label,
         )
         normalized.append(example)
 

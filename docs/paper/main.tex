@@ -1,0 +1,86 @@
+% =====================================================================
+% main.tex - self-contained Overleaf-ready harness for methodology.tex
+%
+% Upload these four files to a single Overleaf project (flat structure):
+%   main.tex                    <-- this file; set as "Main document"
+%   methodology.tex
+%   methodology_preamble.tex
+%   references.bib
+%
+% Then build with pdfLaTeX.  Overleaf will run latex/bibtex/latex/latex
+% automatically when you compile.
+% =====================================================================
+
+\documentclass[11pt]{article}
+
+% ---------------------------------------------------------------------
+% Page geometry (replace with your venue's class file when ready)
+% ---------------------------------------------------------------------
+\usepackage[margin=1in]{geometry}
+
+% Scalable fonts must be loaded BEFORE microtype, otherwise pdfTeX
+% throws "auto expansion is only possible with scalable" and aborts.
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% ---------------------------------------------------------------------
+% Pull in everything methodology.tex requires
+% ---------------------------------------------------------------------
+\input{methodology_preamble.tex}
+
+% ---------------------------------------------------------------------
+% Hyperlinks (load LAST in the preamble - this is a hard rule for natbib)
+% ---------------------------------------------------------------------
+\usepackage[hidelinks]{hyperref}
+
+% =====================================================================
+\begin{document}
+% =====================================================================
+
+\title{Compiled Reward Systems for Open-Ended Reinforcement Learning}
+\author{Anonymous}
+\date{}
+\maketitle
+
+% ---------------------------------------------------------------------
+% Section 1 - Introduction (placeholder so \ref{sec:intro} resolves)
+% ---------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+\textit{Placeholder.}  Replace this section with the introduction draft.
+The methodology in Section~\ref{sec:methodology} references this
+section's \texttt{sec:intro} label, so the label must exist.
+
+% ---------------------------------------------------------------------
+% Section 2 - Related Work (optional; safe to delete)
+% ---------------------------------------------------------------------
+\section{Related Work}
+\label{sec:related}
+
+\textit{Placeholder.}
+
+% ---------------------------------------------------------------------
+% Section 3 - Methodology (this is the actual section file)
+% ---------------------------------------------------------------------
+\input{methodology.tex}
+
+% ---------------------------------------------------------------------
+% Section 4 - Experiments (placeholder so \ref{sec:experiments} resolves)
+% ---------------------------------------------------------------------
+\section{Experiments}
+\label{sec:experiments}
+
+\textit{Placeholder.}  Replace this section with the experiments draft.
+The methodology references this section's \texttt{sec:experiments} label.
+
+% ---------------------------------------------------------------------
+% Bibliography
+% ---------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% =====================================================================
+\end{document}
+% =====================================================================

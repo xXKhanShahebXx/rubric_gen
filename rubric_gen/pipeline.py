@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from rubric_gen.candidate_generation import build_candidate_pool
+from rubric_gen.compiled.medical_rubric_index import (
+    DEFAULT_EMBEDDING_MODEL_SPEC as _MEDICAL_INDEX_EMBEDDING_SPEC,
+    MedicalRubricIndex,
+    OpenAIEmbedder,
+)
+from rubric_gen.compiled.relevance_filter import (
+    RelevanceFilterConfig,
+    filter_relevant_criteria,
+    parse_strictness as _parse_relevance_filter_strictness,
+)
 from rubric_gen.config import PipelineConfig
 from rubric_gen.dataio import load_examples
 from rubric_gen.evaluation.bank_judge import judge_rubric_bank
@@ -76,6 +86,12 @@ class RubricPipeline:
         self.rubric_satisfaction_cache = JsonlCache(self.layout.cache_dir / "rubric_satisfaction.jsonl", enabled=cache_enabled)
         self.direct_judge_cache = JsonlCache(self.layout.cache_dir / "direct_judge.jsonl", enabled=cache_enabled)
         self.rubric_bank_judge_cache = JsonlCache(self.layout.cache_dir / "rubric_bank_judgments.jsonl", enabled=cache_enabled)
+        self.relevance_filter_cache = JsonlCache(
+            self.layout.cache_dir / "rubric_relevance_filter.jsonl", enabled=cache_enabled
+        )
+        self.medical_query_embedding_cache = JsonlCache(
+            self.layout.cache_dir / "medical_query_embeddings.jsonl", enabled=cache_enabled
+        )
         self.engine = RRDEngine(
             config=config,
             router=self.router,
@@ -83,9 +99,106 @@ class RubricPipeline:
             filter_cache=self.rubric_filter_cache,
             satisfaction_cache=self.rubric_satisfaction_cache,
         )
+        # Validation-time retrieval state. The index and embedder are lazy because
+        # most invocations (training, dry-runs, paper mode) don't need them. The
+        # ``_should_retrieve`` predicate gates the actual retrieval call below.
+        self._medical_index: MedicalRubricIndex | None = None
+        self._medical_embedder: OpenAIEmbedder | None = None
+        self._medical_index_load_error: str = ""
+        self._relevance_filter_config = self._build_relevance_filter_config()
+
+    # ------------------------------------------------------------------
+    # Validation-time retrieval helpers
+    # ------------------------------------------------------------------
+
+    def _build_relevance_filter_config(self) -> RelevanceFilterConfig:
+        if not self.config.medical_rubric_filter_enabled:
+            return RelevanceFilterConfig(enabled=False)
+        try:
+            strictness = _parse_relevance_filter_strictness(
+                self.config.medical_rubric_filter_strictness
+            )
+        except ValueError:
+            strictness = _parse_relevance_filter_strictness(None)
+        model_spec = self.config.medical_rubric_filter_model
+        if model_spec is None:
+            from rubric_gen.compiled.relevance_filter import DEFAULT_FILTER_MODEL
+
+            model_spec = DEFAULT_FILTER_MODEL
+        return RelevanceFilterConfig(
+            enabled=True,
+            model_spec=model_spec,
+            strictness=strictness,
+        )
+
+    def _maybe_load_medical_index(self) -> None:
+        if self._medical_index is not None or self._medical_index_load_error:
+            return
+        index_path = self.config.medical_rubric_index_path
+        if index_path is None:
+            return
+        try:
+            self._medical_index = MedicalRubricIndex.load(Path(index_path))
+        except Exception as exc:  # pragma: no cover - load failures surface in debug
+            self._medical_index = None
+            self._medical_index_load_error = f"{type(exc).__name__}: {exc}"
+
+    def _maybe_create_embedder(self) -> OpenAIEmbedder | None:
+        if self.config.dry_run:
+            return None
+        if self._medical_embedder is None:
+            self._medical_embedder = OpenAIEmbedder(model_spec=_MEDICAL_INDEX_EMBEDDING_SPEC)
+        return self._medical_embedder
+
+    def _should_retrieve(self) -> bool:
+        # Retrieval fires when (a) the medical rubric index is supplied,
+        # (b) the run is not a dry-run, (c) the retrieval top-k is positive,
+        # and (d) the split is `val` (the original validation flow) OR `all`
+        # (a standalone validation dataset such as medical_gpt41_answers_rl
+        # which isn't a split of the training corpus). Training (split=`train`)
+        # never retrieves -- the per-example RRD discovery there is the source
+        # the index is BUILT from, so seeding it with itself would be circular.
+        return (
+            self.config.medical_rubric_index_path is not None
+            and self.config.split in ("val", "all")
+            and not self.config.dry_run
+            and self.config.medical_rubric_retrieval_top_k > 0
+        )
 
     def _example_artifact_path(self, example_id: str) -> Path:
         return self.layout.examples_dir / f"{example_id}.json"
+
+    @staticmethod
+    def _collect_filter_candidate_texts(example) -> List[str]:
+        """Pick the candidate texts shown to the relevance filter.
+
+        v2 Tier B1 fix: pair-mode datasets (e.g. medical_gpt5_b_regen_4k_rl)
+        do not populate ``reference_artifact`` / ``augmented_artifact`` because
+        the loader's ``_REFERENCE_ARTIFACT_KEYS`` does not list
+        ``reference_answer_a/b``.  Without this fix the filter saw an empty
+        ``[""]`` for pair-only rows and dropped almost every retrieved
+        rubric as IRRELEVANT (19.8% zero-seed rate at the original 4k run).
+
+        Order of preference:
+          1. Both pair anchors when the example carries ``has_pair_candidates``.
+          2. ``augmented_artifact`` then ``reference_artifact`` (legacy single-
+             response rows).
+          3. ``[""]`` only as a last resort -- equivalent to the old behaviour.
+        """
+        if getattr(example, "has_pair_candidates", False):
+            texts = []
+            if getattr(example, "pair_response_a", ""):
+                texts.append(str(example.pair_response_a).strip())
+            if getattr(example, "pair_response_b", ""):
+                texts.append(str(example.pair_response_b).strip())
+            texts = [t for t in texts if t]
+            if texts:
+                return texts
+        single = (
+            (getattr(example, "augmented_artifact", "") or "")
+            or (getattr(example, "reference_artifact", "") or "")
+        ).strip()
+        return [single] if single else [""]
 
     def _process_example_to_disk(self, example) -> Dict[str, object]:
         """Run a single example end-to-end and persist its artifact.
@@ -98,6 +211,92 @@ class RubricPipeline:
         write_json(self._example_artifact_path(example.example_id), artifact)
         return artifact
 
+    def _retrieve_seed_rubrics_for_example(
+        self, example
+    ) -> Tuple[List[str], Dict[str, object]]:
+        """Embed the example's prompt, hit the medical rubric index, then filter.
+
+        Returns ``(seed_rubric_texts, debug_payload)``. ``debug_payload`` records the
+        retrieval source, K, the criterion ids that survived the relevance filter,
+        and the filter's per-criterion verdicts so the per-example artifact can be
+        audited later. On any failure (missing index, embed error) the helper
+        degrades gracefully: returns no seeds and records the error in the debug
+        payload, so the validation run still completes with pure RRD discovery.
+        """
+        debug: Dict[str, object] = {
+            "index_path": str(self.config.medical_rubric_index_path)
+            if self.config.medical_rubric_index_path
+            else "",
+            "top_k": int(self.config.medical_rubric_retrieval_top_k),
+            "filter_enabled": bool(self._relevance_filter_config.enabled),
+            "filter_strictness": self._relevance_filter_config.strictness,
+        }
+        self._maybe_load_medical_index()
+        if self._medical_index is None:
+            debug["error"] = self._medical_index_load_error or "index_not_loaded"
+            return [], debug
+        embedder = self._maybe_create_embedder()
+        if embedder is None:
+            debug["error"] = "no_embedder_router"
+            return [], debug
+
+        prompt_text = (example.task_prompt or "").strip()
+        if not prompt_text:
+            debug["error"] = "empty_prompt"
+            return [], debug
+
+        try:
+            embedding = embedder.embed_text(prompt_text)
+        except Exception as exc:
+            debug["error"] = f"embed_error:{type(exc).__name__}"
+            return [], debug
+        if not embedding:
+            debug["error"] = "empty_embedding"
+            return [], debug
+
+        try:
+            scored = self._medical_index.retrieve_top_k(
+                embedding,
+                k=int(self.config.medical_rubric_retrieval_top_k),
+            )
+        except Exception as exc:
+            debug["error"] = f"retrieve_error:{type(exc).__name__}"
+            return [], debug
+        retrieved_items = [item for item, _score in scored]
+        debug["retrieved_count"] = len(retrieved_items)
+        debug["retrieved"] = [
+            {"rubric_id": item.rubric_id, "score": float(score)}
+            for item, score in scored
+        ]
+
+        criteria = [item.to_criterion() for item in retrieved_items]
+        if self._relevance_filter_config.enabled and criteria:
+            # v2 Tier B1: pair-mode candidate-text fix.
+            # The original code passed only ``example.augmented_artifact or
+            # example.reference_artifact`` to the relevance filter.  For the
+            # 4k pair JSONL (`reference_answer_a` / `reference_answer_b`),
+            # the loader's ``_REFERENCE_ARTIFACT_KEYS`` does NOT include
+            # those fields, so on pair-only rows the filter saw an empty
+            # ``[""]`` candidate text and drove the Sonnet judge toward
+            # IRRELEVANT for nearly everything (19.8% of 4k rows ended up
+            # with zero seed inputs).  When the example has pair candidates,
+            # pass both anchor responses so the filter sees real text.
+            candidate_texts = self._collect_filter_candidate_texts(example)
+            kept_criteria, filter_debug = filter_relevant_criteria(
+                criteria,
+                prompt_text=prompt_text,
+                candidate_texts=candidate_texts,
+                config=self._relevance_filter_config,
+                router=self.router,
+                cache=self.relevance_filter_cache,
+            )
+            debug["filter"] = filter_debug
+            criteria = kept_criteria
+
+        seed_texts = [criterion.requirement for criterion in criteria if criterion.requirement]
+        debug["seed_count"] = len(seed_texts)
+        return seed_texts, debug
+
     def _run_example(self, example) -> Dict[str, object]:
         candidates = build_candidate_pool(
             example=example,
@@ -105,7 +304,21 @@ class RubricPipeline:
             router=self.router,
             generation_cache=self.candidate_generation_cache,
         )
-        rrd_result = self.engine.run_rrd(example, candidates)
+
+        seed_initial_rubrics: List[str] = []
+        retrieval_debug: Dict[str, object] = {}
+        if self._should_retrieve():
+            seed_initial_rubrics, retrieval_debug = self._retrieve_seed_rubrics_for_example(
+                example
+            )
+
+        rrd_result = self.engine.run_rrd(
+            example,
+            candidates,
+            seed_initial_rubrics=seed_initial_rubrics,
+        )
+        if retrieval_debug:
+            rrd_result["retrieval_debug"] = retrieval_debug
         compression = compress_rubric_bank(rrd_result["rubrics"])
         rrd_result["compressed_bank"] = compression["compressed_bank"]
         rrd_result["compression_summary"] = {

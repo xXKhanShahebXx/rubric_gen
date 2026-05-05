@@ -3,6 +3,9 @@
 > **Status:** complete. Best blind-350 single-order accuracy = **80.57 %** on
 > `validation_350` (`jb_350_blind_v47_agreement_aware`). Best
 > literature-comparable rubric-judge number = **69.43 %** (v2.1).
+> Cross-benchmark transfer to RewardBench 2 (`rb2_full_v47`) =
+> **52.66 %** 5-subset leaderboard avg, single full eval — see
+> [`reward_bench_2_results.md`](reward_bench_2_results.md).
 >
 > **Read first:** the [Fairness & Reportability](#fairness--reportability)
 > section is mandatory before quoting any number from this document.
@@ -12,7 +15,9 @@ encountered, every score, every code artifact, and the reportability
 analysis for the JudgeBench-350 recovery / 80+ effort. It supersedes the
 prior partial summaries (`judgebench_350_recovery_handoff.md`,
 `judgebench_v2_training_runs.md`, `judgebench_v3_results.md`,
-`judgebench_v4_results.md`).
+`judgebench_v4_results.md`). The RewardBench 2 transfer eval lives in the
+two companion docs ([`reward_bench_2.md`](reward_bench_2.md) /
+[`reward_bench_2_results.md`](reward_bench_2_results.md)).
 
 ---
 
